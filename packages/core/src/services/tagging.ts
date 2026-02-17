@@ -91,6 +91,10 @@ function metadataArgs(metadata: TrackMetadata): string[] {
 }
 
 export async function applyTags(input: ApplyTagsInput): Promise<ApplyTagsOutput> {
+  if (input.qualityMode === "video_mp4") {
+    throw new Error("Video MP4 jobs bypass audio tagging.");
+  }
+
   const warnings: ExtractionWarning[] = [];
   const sourceExt = path.extname(input.inputPath).toLowerCase();
   const outputExt = input.qualityMode === "mp3_320_export" ? ".mp3" : sourceExt || ".m4a";

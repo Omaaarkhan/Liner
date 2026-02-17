@@ -99,6 +99,7 @@ export function App(): JSX.Element {
   const [notice, setNotice] = useState<string>("");
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => readThemeMode());
   const artworkFileInputRef = useRef<HTMLInputElement | null>(null);
+  const isVideoTargetMode = settings?.qualityMode === "video_mp4";
 
   function getBridge(): DesktopBridge | null {
     if (window.audioRipper) {
@@ -457,6 +458,7 @@ export function App(): JSX.Element {
   }
 
   const selectedCandidate = selectedJob?.metadataCandidates?.[selectedCandidateIndex];
+  const isVideoJob = selectedJob?.request.qualityMode === "video_mp4";
   const artworkSourceLabel =
     artworkDraft.source === "custom"
       ? "Local upload"
@@ -490,8 +492,9 @@ export function App(): JSX.Element {
   }
 
   const canApplyMetadata =
-    selectedJob?.status === "awaiting_user_choice" ||
-    (selectedJob?.status === "completed" && Boolean(selectedJob.outputPath));
+    !isVideoJob &&
+    (selectedJob?.status === "awaiting_user_choice" ||
+      (selectedJob?.status === "completed" && Boolean(selectedJob.outputPath)));
 
   return (
     <>
@@ -523,7 +526,12 @@ export function App(): JSX.Element {
               placeholder="https://www.youtube.com/watch?v=..."
             />
           </label>
-          <button className="primary" onClick={startJob}>Analyze + Download</button>
+          <button className="primary" onClick={startJob}>
+            {isVideoTargetMode ? "Analyze + Download MP4" : "Analyze + Download"}
+          </button>
+          <p className="muted">
+            Target mode: {isVideoTargetMode ? "YouTube video (MP4)" : "Audio extraction"}
+          </p>
           {notice ? <p className="notice">{notice}</p> : null}
 
           <div className="badge-row">
@@ -546,7 +554,7 @@ export function App(): JSX.Element {
                 Format: <strong>{selectedJob.videoInfo.selectedFormat.formatId}</strong> / {selectedJob.videoInfo.selectedFormat.ext ?? "unknown"}
               </p>
               <p>
-                Audio score: <strong>{selectedJob.videoInfo.selectedFormat.audioQualityScore.toFixed(1)}</strong>
+                {isVideoJob ? "Video score" : "Audio score"}: <strong>{selectedJob.videoInfo.selectedFormat.audioQualityScore.toFixed(1)}</strong>
               </p>
               <p>
                 Status: <span className={`status ${selectedJob.status}`}>{statusLabel(selectedJob.status)}</span>
@@ -561,7 +569,9 @@ export function App(): JSX.Element {
       <section className="grid-middle">
         <article className="panel metadata">
           <h2>Metadata Review</h2>
-          {!selectedJob?.metadataCandidates?.length ? (
+          {isVideoJob ? (
+            <p className="muted">MP4 video mode skips audio metadata tagging and artwork embedding.</p>
+          ) : !selectedJob?.metadataCandidates?.length ? (
             <p className="muted">Metadata candidates will appear after extraction starts.</p>
           ) : (
             <div className="metadata-layout">
@@ -690,6 +700,7 @@ export function App(): JSX.Element {
                 >
                   <option value="source_fidelity">source_fidelity</option>
                   <option value="mp3_320_export">mp3_320_export</option>
+                  <option value="video_mp4">video_mp4</option>
                 </select>
               </label>
               <label>
@@ -734,9 +745,10 @@ export function App(): JSX.Element {
                 <input
                   type="checkbox"
                   checked={settings.embedArtwork}
+                  disabled={settings.qualityMode === "video_mp4"}
                   onChange={(event) => setSettings({ ...settings, embedArtwork: event.target.checked })}
                 />
-                Embed artwork when possible
+                {settings.qualityMode === "video_mp4" ? "Artwork embedding is audio-only" : "Embed artwork when possible"}
               </label>
               <button className="primary" onClick={saveSettings}>Save settings</button>
             </div>

@@ -18,13 +18,14 @@ import type {
 } from "@audio-ripper/shared";
 import { probeAudio } from "../services/ffprobe.js";
 import { HistoryStore } from "../services/history-store.js";
-import { moveIntoLibrary } from "../services/library.js";
+import { moveIntoLibrary, moveVideoIntoLibrary } from "../services/library.js";
 import { resolveCandidates, resolveCandidatesFromVideo } from "../services/metadata.js";
 import { DEFAULT_SETTINGS, SettingsStore } from "../services/settings-store.js";
 import { applyTags } from "../services/tagging.js";
 import { runPreflight } from "../services/binaries.js";
-import { analyzeVideo, downloadAudio } from "../services/youtube.js";
+import { analyzeVideo, downloadAudio, downloadVideoAsMp4 } from "../services/youtube.js";
 import { ensureDir } from "../utils/fs.js";
+import { CommandExecutionError } from "../utils/process.js";
 
 interface PendingChoiceContext {
   tempDir: string;
@@ -33,6 +34,21 @@ interface PendingChoiceContext {
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof CommandExecutionError) {
+    const firstStderrLine = error.stderr
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line.length > 0);
+
+    if (firstStderrLine) {
+      return `${error.message}. ${firstStderrLine}`;
+    }
+  }
+
+  return error instanceof Error ? error.message : "Unknown failure";
 }
 
 export interface DownloadOrchestratorOptions {
@@ -209,7 +225,7 @@ export class DownloadOrchestrator extends EventEmitter {
         return;
       }
 
-      const message = error instanceof Error ? error.message : "Unknown failure";
+      const message = errorMessage(error);
       this.appendLog(jobId, `ERROR: ${message}`);
 
       try {
@@ -318,6 +334,9 @@ export class DownloadOrchestrator extends EventEmitter {
     if (existing.status !== "completed" || !existing.outputPath) {
       throw new Error("No metadata selection is pending for this job.");
     }
+    if (existing.request.qualityMode === "video_mp4") {
+      throw new Error("Metadata re-apply is not available for MP4 video jobs.");
+    }
 
     await this.updateJob(input.jobId, {
       status: "tagging",
@@ -342,13 +361,40 @@ export class DownloadOrchestrator extends EventEmitter {
         throw new Error("Job disappeared from queue.");
       }
 
-      const videoInfo = await analyzeVideo(existing.request.url);
+      const videoInfo = await analyzeVideo(existing.request.url, existing.request.qualityMode);
       await this.updateJob(jobId, {
         status: "downloading",
         videoInfo
       });
 
       tempDir = await mkdtemp(path.join(os.tmpdir(), "audio-ripper-"));
+
+      if (existing.request.qualityMode === "video_mp4") {
+        const downloadedVideoPath = await downloadVideoAsMp4({
+          url: existing.request.url,
+          tempDir,
+          expectedVideoId: videoInfo.id,
+          downloadSpeedProfile: existing.request.downloadSpeedProfile || "balanced",
+          signal: controller.signal,
+          onLog: (line) => this.appendLog(jobId, line)
+        });
+
+        const finalOutputPath = await moveVideoIntoLibrary({
+          stagedFilePath: downloadedVideoPath,
+          outputRoot: existing.request.outputRoot,
+          title: videoInfo.title
+        });
+
+        this.controllers.delete(jobId);
+        await this.updateJob(jobId, {
+          status: "completed",
+          outputPath: finalOutputPath,
+          warnings: existing.warnings
+        });
+
+        return;
+      }
+
       const downloadedAudioPath = await downloadAudio({
         url: existing.request.url,
         formatId: videoInfo.selectedFormat.formatId,

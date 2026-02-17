@@ -1,4 +1,4 @@
-export type QualityMode = "source_fidelity" | "mp3_320_export";
+export type QualityMode = "source_fidelity" | "mp3_320_export" | "video_mp4";
 export type DownloadSpeedProfile = "safe" | "balanced" | "aggressive";
 
 export type MetadataSource = "youtube" | "musicbrainz";
