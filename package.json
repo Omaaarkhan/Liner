@@ -1,0 +1,23 @@
+{
+  "name": "youtube-audio-ripper",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Desktop app for high-fidelity YouTube audio extraction and metadata tagging",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w apps/desktop",
+    "build": "npm run build -w packages/shared && npm run build -w packages/core && npm run build -w apps/desktop",
+    "test": "npm run test -w packages/tests",
+    "package:mac": "npm run package:mac -w apps/desktop",
+    "lint": "npm run lint -w apps/desktop"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}

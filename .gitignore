@@ -1,0 +1,12 @@
+node_modules
+dist
+dist-electron
+dist-renderer
+.vite
+coverage
+.DS_Store
+*.log
+*.tmp
+.cache
+apps/desktop/vendor
+apps/desktop/release
