@@ -10,3 +10,5 @@ coverage
 .cache
 apps/desktop/vendor
 apps/desktop/release
+apps/desktop/build/*.ppm
+apps/desktop/build/icon.iconset

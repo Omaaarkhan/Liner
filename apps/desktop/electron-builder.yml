@@ -12,6 +12,7 @@ extraResources:
     filter:
       - "**/*"
 mac:
+  icon: build/icon.icns
   category: public.app-category.music
   target:
     - dmg
