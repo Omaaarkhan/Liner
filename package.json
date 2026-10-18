@@ -1,6 +1,6 @@
 {
   "name": "youtube-audio-ripper",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Desktop app for high-fidelity YouTube audio extraction and metadata tagging",
   "workspaces": [
@@ -9,15 +9,22 @@
   ],
   "scripts": {
     "dev": "npm run dev -w apps/desktop",
+    "dev:ui": "npm run build -w packages/shared && npm run dev:ui -w apps/desktop",
     "build": "npm run build -w packages/shared && npm run build -w packages/core && npm run build -w apps/desktop",
     "test": "npm run test -w packages/tests",
+    "lint": "npm run lint -w apps/desktop",
     "package:mac": "npm run package:mac -w apps/desktop",
-    "lint": "npm run lint -w apps/desktop"
+    "package:win": "npm run package:win -w apps/desktop"
   },
   "engines": {
     "node": ">=20"
   },
   "devDependencies": {
     "typescript": "^5.7.3"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Omaaarkhan/YT-RIPPER.git"
   }
 }

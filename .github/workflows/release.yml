@@ -1,0 +1,42 @@
+name: Release
+
+# Push a tag like v0.2.0 to build installers and attach them to a draft GitHub release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest      # Apple Silicon .dmg
+            script: package:mac
+          - os: macos-15-intel    # Intel .dmg
+            script: package:mac
+          - os: windows-latest    # x64 installer .exe
+            script: package:win
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run ${{ matrix.script }} -- --publish never
+        env:
+          # Builds are unsigned until signing secrets are added.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.exe

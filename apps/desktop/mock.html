@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>YT-RIPPER (mock data)</title>
+    <!-- UI development without Electron: `npm run dev:ui`. Add ?platform=win32 to preview Windows. -->
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module">
+      import { mockBridge } from "/src/dev/mock-bridge.ts";
+      window.audioRipper = mockBridge;
+      await import("/src/main.tsx");
+    </script>
+  </body>
+</html>

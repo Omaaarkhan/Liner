@@ -1,149 +1,85 @@
 # YouTube Audio Ripper
 
-YouTube Audio Ripper is a macOS-first Electron desktop app for downloading a single YouTube video as high-fidelity audio or MP4 video, enriching audio metadata, embedding artwork, and organizing the result into a local library.
+A desktop app for macOS and Windows that saves a YouTube video as high-quality audio or as an MP4, finds the right song tags on MusicBrainz, adds cover art, and files everything into a tidy music folder.
 
-The app currently targets single-video URLs only. Playlist, channel, and batch workflows are out of scope for this version.
+<p align="center"><img src="apps/desktop/build/icon.png" width="128" alt="App icon: a record with a download arrow on its label"></p>
 
-## Features
+## What it does
 
-- `source_fidelity` audio mode preserves the best available source audio format whenever possible.
-- `mp3_320_export` audio mode transcodes output to MP3 320 kbps for compatibility.
-- `video_mp4` mode downloads video and saves it as MP4.
-- Metadata lookup combines YouTube title parsing with MusicBrainz candidate search.
-- Artwork comes from Cover Art Archive when available, with YouTube thumbnail fallback and manual artwork replacement in the UI.
-- Low-confidence metadata pauses the job for manual review instead of silently committing tags.
-- Queue/history supports delete, clear history, and `Show in Finder` for completed jobs.
-- Light and dark themes are built into the desktop UI.
+- **Paste a link and go.** Paste anywhere in the window, drop a link on it, or press ⌘⇧V (Ctrl+Shift+V on Windows) to paste and start in one step.
+- **Pick the format per download.** Original (the best audio YouTube has, untouched), MP3 320, or Video (MP4).
+- **Live progress.** Each download shows its step (fetch, download, match, tag), size and time left.
+- **Tags you can trust.** Matches come from MusicBrainz. When the best match is below your threshold, the download waits in **Needs review**, where you see what the video title says next to what will be saved, and can fix any field.
+- **Cover art.** Album covers from the Cover Art Archive, the video frame, or your own image.
+- **An organised library.** Audio goes to `Artist/Album/NN - Title.ext`, videos to `Videos/Title.mp4`, under a folder you choose.
+- **Stays working.** YouTube changes often, so the app checks for a new yt-dlp once a day and updates it for you.
+- **Light and dark**, native window styles on macOS and Windows 11.
 
-## Repo Layout
+Single videos only for now. Playlists and channels are not supported yet.
 
-- `apps/desktop`: Electron main/preload code, React renderer, packaging config, app assets.
-- `packages/core`: Download orchestration, metadata resolution, tagging, library placement, persistence.
-- `packages/shared`: Shared TypeScript types and contracts.
-- `packages/tests`: Vitest coverage for parser and library-placement logic.
+## Install
 
-## Requirements
+Download the latest `.dmg` (macOS) or `.exe` (Windows) from [Releases](https://github.com/Omaaarkhan/YT-RIPPER/releases).
 
-- Node.js `>= 20`
-- npm
-- Network access during setup/build so the desktop app can fetch the bundled `yt-dlp` binary
+The builds are not code-signed yet:
 
-You do not normally need to install `ffmpeg`, `ffprobe`, or `yt-dlp` yourself. The desktop app prepares and bundles them during build/package flows.
+- **macOS:** the first time, right-click the app in Applications and choose **Open**, then **Open** again.
+- **Windows:** if SmartScreen appears, choose **More info**, then **Run anyway**.
 
-## Install And Run
+## Build from source
+
+You need Node.js 20 or newer.
 
 ```bash
 npm install
 npm run dev
 ```
 
-`npm run dev` starts the Vite renderer, TypeScript watch for the Electron main process, and launches Electron once the renderer is ready.
+`npm run dev` downloads yt-dlp, prepares ffmpeg, and opens the app with live reload.
 
-On first build-oriented runs, the desktop app prepares bundled binaries under `apps/desktop/vendor/bin/<platform>-<arch>`.
+| Command | What it does |
+| --- | --- |
+| `npm run dev` | Run the app in development |
+| `npm run dev:ui` | Run only the interface in a browser with sample data (no Electron needed) |
+| `npm test` | Run the tests |
+| `npm run lint` | Type-check everything |
+| `npm run package:mac` | Build a `.dmg` and `.zip` for this Mac's architecture into `apps/desktop/release/` |
+| `npm run package:win` | Build a Windows installer (run on Windows) |
 
-## Available Scripts
+Installers for every platform are built by GitHub Actions when a `v*` tag is pushed (see `.github/workflows/release.yml`). Each platform builds on its own OS because the bundled tools are prepared for the machine doing the build.
 
-```bash
-npm run dev
-npm run test
-npm run lint
-npm run build
-npm run package:mac
-```
+### Using your own yt-dlp or ffmpeg
 
-- `npm run test`: runs the Vitest suite in `packages/tests`
-- `npm run lint`: runs TypeScript no-emit checks for the desktop app
-- `npm run build`: builds shared, core, and desktop packages
-- `npm run package:mac`: creates macOS release artifacts in `apps/desktop/release/`
-
-## Packaging
-
-macOS packaging is currently configured in `apps/desktop/electron-builder.yml`.
-
-Current outputs:
-
-- `.dmg`
-- `.zip`
-
-The packaged app includes bundled binaries through Electron Builder `extraResources`.
-
-macOS code signing and notarization are not configured in this repo. Packaged builds are unsigned unless you add signing credentials separately.
-
-## How To Use
-
-1. Launch the app.
-2. Pick an output root and quality mode in Settings.
-3. Optionally choose a speed profile, metadata confidence threshold, and artwork preference.
-4. Paste a single YouTube URL into the home panel.
-5. Click the analyze/download button.
-6. For audio jobs, review metadata candidates, edit fields or artwork if needed, then apply metadata.
-7. For video jobs, the app downloads MP4 output without audio metadata tagging.
-8. Use Queue & History to inspect logs, reveal completed files in Finder, delete entries, or clear the full history.
-
-## Download Modes
-
-- `source_fidelity`: downloads the best available audio stream and avoids lossy re-encoding by default
-- `mp3_320_export`: exports MP3 CBR 320 kbps
-- `video_mp4`: downloads video and writes MP4 output
-
-## Output Layout
-
-Default output root:
-
-```text
-~/Downloads/YouTube Audio Ripper
-```
-
-File placement:
-
-- Audio: `OutputRoot/Artist/Album/NN - Title.ext`
-- Video: `OutputRoot/Videos/<Video Title>.mp4`
-
-Settings and queue/history data are stored in the app's Electron `userData` directory.
-
-## Bundled Binaries And Overrides
-
-The desktop app prepares and uses these tools:
-
-- `ffmpeg`
-- `ffprobe`
-- `yt-dlp`
-
-You can override the resolved binary paths with environment variables:
+The app bundles both. To use other copies, set these before launching:
 
 ```bash
-YAR_FFMPEG_PATH=/custom/path/to/ffmpeg
-YAR_FFPROBE_PATH=/custom/path/to/ffprobe
-YAR_YTDLP_PATH=/custom/path/to/yt-dlp
+YAR_FFMPEG_PATH=/path/to/ffmpeg
+YAR_YTDLP_PATH=/path/to/yt-dlp
 ```
 
-The app also exposes a preflight check in the UI so you can verify binary availability and versions.
+## How it works
 
-If you prefer system-installed tools as a fallback, you can still install them manually:
+1. yt-dlp fetches the video's details once and saves them, so the download step doesn't repeat the work.
+2. The best audio stream (or video and audio for MP4) downloads with progress reported back to the window.
+3. The video title is parsed into artist and title and searched on MusicBrainz.
+4. If the best match clears your threshold it's applied automatically; otherwise the download waits for you.
+5. ffmpeg writes the tags and cover art, and the file moves into your library.
 
-```bash
-brew install ffmpeg yt-dlp
-```
+Settings and history live in the app's data folder (`~/Library/Application Support/@audio-ripper/desktop` on macOS, `%APPDATA%\@audio-ripper\desktop` on Windows).
 
-## Metadata And Artwork
+## Repository layout
 
-- MusicBrainz recording search is used to build metadata candidates.
-- Cover art is fetched from Cover Art Archive when a MusicBrainz release is available.
-- The YouTube thumbnail is used as fallback artwork when better release art is unavailable.
-- Artwork embedding is audio-only.
-- `video_mp4` jobs skip audio metadata tagging and artwork embedding.
+- `apps/desktop`: Electron main process, preload bridge, React interface, packaging config and icons.
+- `packages/core`: download pipeline, tag matching, tagging, library placement, history.
+- `packages/shared`: shared TypeScript types.
+- `packages/tests`: Vitest tests.
 
-## Current Limitations
+See [CONTRIBUTING.md](CONTRIBUTING.md) to get involved.
 
-- Single-video URLs only
-- macOS packaging is implemented; other release targets are not configured here
-- Some YouTube videos may require extractor fallback behavior depending on current `yt-dlp` support
-- Automated tests do not currently cover full desktop end-to-end flows
+## License
 
-## Redistribution Note
+MIT for this project's code. The bundled yt-dlp and FFmpeg keep their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-This project bundles third-party binaries during build and packaging. Review the licenses and redistribution obligations for those binaries before shipping public installers.
+## Use it responsibly
 
-## Legal Notice
-
-You are responsible for complying with YouTube's terms of service, content-owner rights, and any applicable copyright law when using this app.
+Only download media you have the right to save. You're responsible for following YouTube's terms of service and the copyright law where you live. This project is not affiliated with or endorsed by YouTube or Google.

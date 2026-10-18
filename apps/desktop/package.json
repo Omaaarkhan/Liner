@@ -1,6 +1,6 @@
 {
   "name": "@audio-ripper/desktop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Desktop app for high-fidelity YouTube audio extraction and metadata tagging",
   "author": "Omar",
@@ -19,7 +19,9 @@
     "build:renderer": "vite build",
     "package:mac": "npm run build && electron-builder --mac",
     "preview": "vite preview",
-    "lint": "tsc -p tsconfig.electron.json --noEmit && tsc -p tsconfig.renderer.json --noEmit"
+    "lint": "tsc -p tsconfig.electron.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+    "package:win": "npm run build && electron-builder --win",
+    "dev:ui": "vite --open /mock.html"
   },
   "dependencies": {
     "@audio-ripper/core": "0.1.0",
@@ -34,12 +36,12 @@
     "@vitejs/plugin-react": "^4.4.1",
     "concurrently": "^9.1.2",
     "cross-env": "^7.0.3",
-    "electron": "34.0.0",
-    "electron-builder": "^25.1.8",
+    "electron": "44.5.1",
+    "electron-builder": "26.16.1",
     "ffmpeg-static": "^5.2.0",
-    "ffprobe-static": "^3.1.0",
     "typescript": "^5.7.3",
     "vite": "^6.2.0",
     "wait-on": "^8.0.2"
-  }
+  },
+  "license": "MIT"
 }

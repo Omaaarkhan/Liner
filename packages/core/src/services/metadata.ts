@@ -8,7 +8,8 @@ import type {
 
 const MUSICBRAINZ_BASE = "https://musicbrainz.org/ws/2";
 const COVER_ART_BASE = "https://coverartarchive.org/release";
-const USER_AGENT = "YouTubeAudioRipper/0.1.0 (https://localhost)";
+// MusicBrainz asks clients to identify themselves with a contact URL.
+const USER_AGENT = "YouTubeAudioRipper/0.2.0 ( https://github.com/Omaaarkhan/YT-RIPPER )";
 
 interface MusicBrainzSearchResponse {
   recordings?: Array<{

@@ -3,7 +3,6 @@ import type { BinaryStatus } from "@audio-ripper/shared";
 
 const ENV_FOR_BINARY: Record<BinaryStatus["name"], string> = {
   ffmpeg: "YAR_FFMPEG_PATH",
-  ffprobe: "YAR_FFPROBE_PATH",
   "yt-dlp": "YAR_YTDLP_PATH"
 };
 

@@ -1,6 +1,6 @@
-import { readdir } from "node:fs/promises";
+import { readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { DownloadSpeedProfile, QualityMode, YouTubeFormatInfo, YouTubeVideoInfo } from "@audio-ripper/shared";
+import type { DownloadSpeedProfile, JobProgress, QualityMode, YouTubeFormatInfo, YouTubeVideoInfo } from "@audio-ripper/shared";
 import { runCommand } from "../utils/process.js";
 import { resolveBinaryCommand } from "./binary-paths.js";
 
@@ -11,6 +11,8 @@ interface YtDlpFormat {
   vcodec?: string;
   abr?: number;
   tbr?: number;
+  asr?: number;
+  audio_channels?: number;
   filesize?: number;
 }
 
@@ -48,6 +50,8 @@ function toFormatInfo(format: YtDlpFormat): YouTubeFormatInfo | null {
   const abr = Number.isFinite(format.abr) ? Number(format.abr) : undefined;
   const tbr = Number.isFinite(format.tbr) ? Number(format.tbr) : undefined;
   const filesize = Number.isFinite(format.filesize) ? Number(format.filesize) : undefined;
+  const asr = Number.isFinite(format.asr) ? Number(format.asr) : undefined;
+  const audioChannels = Number.isFinite(format.audio_channels) ? Number(format.audio_channels) : undefined;
 
   return {
     formatId: format.format_id,
@@ -57,6 +61,8 @@ function toFormatInfo(format: YtDlpFormat): YouTubeFormatInfo | null {
     abr,
     tbr,
     filesize,
+    asr,
+    audioChannels,
     audioQualityScore: abr ?? tbr ?? 0
   };
 }
@@ -121,42 +127,104 @@ function selectBestVideoFormat(formats: YtDlpFormat[] = []): YouTubeFormatInfo {
   };
 }
 
-async function runYtDlpJsonDump(url: string): Promise<YtDlpDump> {
+async function runYtDlpJsonDump(url: string): Promise<{ dump: YtDlpDump; raw: string }> {
   const ytdlp = resolveBinaryCommand("yt-dlp");
   const baseArgs = ["--dump-single-json", "--no-playlist", url];
 
   try {
     const result = await runCommand(ytdlp, baseArgs);
-    return JSON.parse(result.stdout) as YtDlpDump;
+    return { dump: JSON.parse(result.stdout) as YtDlpDump, raw: result.stdout };
   } catch {
     const fallbackArgs = ["--dump-single-json", "--no-playlist", "--extractor-args", "youtube:player_client=android", url];
     const result = await runCommand(ytdlp, fallbackArgs);
-    return JSON.parse(result.stdout) as YtDlpDump;
+    return { dump: JSON.parse(result.stdout) as YtDlpDump, raw: result.stdout };
   }
 }
 
-export async function analyzeVideo(url: string, qualityMode: QualityMode = "source_fidelity"): Promise<YouTubeVideoInfo> {
-  const parsed = await runYtDlpJsonDump(url);
+export interface AnalyzeResult {
+  videoInfo: YouTubeVideoInfo;
+  /**
+   * Path of the saved extraction JSON. Passing it to the download step with
+   * --load-info-json skips a second full extraction of the same video.
+   */
+  infoJsonPath?: string;
+}
+
+export async function analyzeVideo(
+  url: string,
+  qualityMode: QualityMode = "source_fidelity",
+  tempDir?: string
+): Promise<AnalyzeResult> {
+  const { dump: parsed, raw } = await runYtDlpJsonDump(url);
 
   if (!parsed.id || !parsed.title || !parsed.webpage_url) {
     throw new YouTubeExtractionError("yt-dlp did not return the required video metadata.");
   }
 
+  let infoJsonPath: string | undefined;
+  if (tempDir) {
+    infoJsonPath = path.join(tempDir, "info.json");
+    await writeFile(infoJsonPath, raw, "utf8");
+  }
+
   return {
-    id: parsed.id,
-    title: parsed.title,
-    uploader: parsed.uploader,
-    channel: parsed.channel,
-    description: parsed.description,
-    webpageUrl: parsed.webpage_url,
-    thumbnail: parsed.thumbnail,
-    duration: parsed.duration,
-    selectedFormat: qualityMode === "video_mp4" ? selectBestVideoFormat(parsed.formats) : selectBestAudioFormat(parsed.formats)
+    infoJsonPath,
+    videoInfo: {
+      id: parsed.id,
+      title: parsed.title,
+      uploader: parsed.uploader,
+      channel: parsed.channel,
+      description: parsed.description,
+      webpageUrl: parsed.webpage_url,
+      thumbnail: parsed.thumbnail,
+      duration: parsed.duration,
+      selectedFormat: qualityMode === "video_mp4" ? selectBestVideoFormat(parsed.formats) : selectBestAudioFormat(parsed.formats)
+    }
+  };
+}
+
+const PROGRESS_MARKER = "yar-progress";
+
+/** Machine-readable progress line; see parseProgressLine. */
+const PROGRESS_ARGS = [
+  "--newline",
+  "--progress-template",
+  `download:${PROGRESS_MARKER} %(progress.downloaded_bytes)s %(progress.total_bytes)s %(progress.total_bytes_estimate)s %(progress.eta)s %(progress.speed)s`
+];
+
+function numberOrUndefined(value: string | undefined): number | undefined {
+  if (!value || value === "NA" || value === "None") {
+    return undefined;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+/** Returns progress for a line printed by PROGRESS_ARGS, or undefined for any other line. */
+export function parseProgressLine(line: string): JobProgress | undefined {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith(PROGRESS_MARKER)) {
+    return undefined;
+  }
+
+  const [, downloaded, total, estimate, eta, speed] = trimmed.split(/\s+/);
+  const downloadedBytes = numberOrUndefined(downloaded);
+  const totalBytes = numberOrUndefined(total) ?? numberOrUndefined(estimate);
+  const fraction =
+    downloadedBytes !== undefined && totalBytes ? Math.min(1, Math.max(0, downloadedBytes / totalBytes)) : undefined;
+
+  return {
+    fraction,
+    downloadedBytes,
+    totalBytes,
+    etaSeconds: numberOrUndefined(eta),
+    speedBytesPerSecond: numberOrUndefined(speed)
   };
 }
 
 export interface DownloadAudioArgs {
   url: string;
+  infoJsonPath?: string;
   formatId: string;
   downloadSpeedProfile?: DownloadSpeedProfile;
   tempDir: string;
@@ -242,7 +310,7 @@ async function executeDownloadPlans(
   plans: DownloadPlan[],
   baseArgs: string[],
   outputTemplate: string,
-  url: string,
+  source: { url: string; infoJsonPath?: string },
   signal: AbortSignal | undefined,
   onLog: ((line: string) => void) | undefined
 ): Promise<void> {
@@ -259,7 +327,13 @@ async function executeDownloadPlans(
       if (plan.extractorArgs) {
         args.push("--extractor-args", plan.extractorArgs);
       }
-      args.push("-N", String(fragments), "-o", outputTemplate, url);
+      args.push("-N", String(fragments), "-o", outputTemplate);
+      // Reuse the analyze step's extraction when the plan uses the same client.
+      if (source.infoJsonPath && !plan.extractorArgs) {
+        args.push("--load-info-json", source.infoJsonPath);
+      } else {
+        args.push(source.url);
+      }
 
       try {
         await runCommand(ytdlp, args, {
@@ -312,9 +386,9 @@ export async function downloadAudio(args: DownloadAudioArgs): Promise<string> {
   await executeDownloadPlans(
     ytdlp,
     plans,
-    ["--no-playlist"],
+    withBundledFfmpeg(["--no-playlist", ...PROGRESS_ARGS]),
     outputTemplate,
-    args.url,
+    { url: args.url, infoJsonPath: args.infoJsonPath },
     args.signal,
     args.onLog
   );
@@ -324,6 +398,7 @@ export async function downloadAudio(args: DownloadAudioArgs): Promise<string> {
 
 export interface DownloadVideoArgs {
   url: string;
+  infoJsonPath?: string;
   tempDir: string;
   expectedVideoId: string;
   downloadSpeedProfile?: DownloadSpeedProfile;
@@ -361,9 +436,9 @@ export async function downloadVideoAsMp4(args: DownloadVideoArgs): Promise<strin
   await executeDownloadPlans(
     ytdlp,
     plans,
-    withBundledFfmpeg(["--no-playlist", "--merge-output-format", "mp4", "--remux-video", "mp4"]),
+    withBundledFfmpeg(["--no-playlist", "--merge-output-format", "mp4", "--remux-video", "mp4", ...PROGRESS_ARGS]),
     outputTemplate,
-    args.url,
+    { url: args.url, infoJsonPath: args.infoJsonPath },
     args.signal,
     args.onLog
   );

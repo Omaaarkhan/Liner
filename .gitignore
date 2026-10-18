@@ -13,3 +13,4 @@ apps/desktop/release
 apps/desktop/build/*.ppm
 apps/desktop/build/icon.iconset
 *.tsbuildinfo
+apps/desktop/build/icon-mac.png

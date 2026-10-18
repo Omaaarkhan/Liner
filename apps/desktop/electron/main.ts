@@ -1,54 +1,69 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
-import { stat } from "node:fs/promises";
-import { app, BrowserWindow, ipcMain, type WebContents } from "electron/main";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeTheme,
+  type BrowserWindowConstructorOptions,
+  type MenuItemConstructorOptions,
+  type WebContents
+} from "electron/main";
 import { shell } from "electron/common";
 import {
+  checkForYtDlpUpdate,
+  compareYtDlpVersions,
   DownloadOrchestrator,
-  runPreflight
+  readInstalledYtDlp,
+  ytDlpAssetName
 } from "@audio-ripper/core";
 import type {
   ChooseMetadataInput,
   CreateJobInput,
   JobEvent,
   ResolveCandidatesInput,
-  Settings
+  Settings,
+  ThemePreference,
+  ToolUpdateStatus
 } from "@audio-ripper/shared";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const platformArch = `${process.platform}-${process.arch}`;
+const isMac = process.platform === "darwin";
+const isWindows = process.platform === "win32";
+const ISSUES_URL = "https://github.com/Omaaarkhan/YT-RIPPER/issues";
+const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
-function binaryName(base: "ffmpeg" | "ffprobe" | "yt-dlp"): string {
-  if (process.platform === "win32") {
-    return base === "yt-dlp" ? "yt-dlp.exe" : `${base}.exe`;
-  }
-  return base;
+function bundledBinRoot(): string {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "bin", platformArch)
+    : path.join(__dirname, "..", "vendor", "bin", platformArch);
 }
 
+function bundledYtDlpPath(): string {
+  return path.join(bundledBinRoot(), "yt-dlp", ytDlpAssetName().executable);
+}
+
+/** Points the core at the bundled tools. Environment overrides set by the user win. */
 function configureBundledBinaries(): void {
-  const packagedBinRoot = path.join(process.resourcesPath, "bin", platformArch);
-  const devBinRoot = path.join(__dirname, "..", "vendor", "bin", platformArch);
-  const binRoot = app.isPackaged ? packagedBinRoot : devBinRoot;
-
-  const ffmpegPath = path.join(binRoot, binaryName("ffmpeg"));
-  const ffprobePath = path.join(binRoot, binaryName("ffprobe"));
-  const ytdlpPath = path.join(binRoot, binaryName("yt-dlp"));
-
-  if (existsSync(ffmpegPath)) {
+  const ffmpegPath = path.join(bundledBinRoot(), isWindows ? "ffmpeg.exe" : "ffmpeg");
+  if (!process.env.YAR_FFMPEG_PATH && existsSync(ffmpegPath)) {
     process.env.YAR_FFMPEG_PATH = ffmpegPath;
   }
-  if (existsSync(ffprobePath)) {
-    process.env.YAR_FFPROBE_PATH = ffprobePath;
-  }
-  if (existsSync(ytdlpPath)) {
-    process.env.YAR_YTDLP_PATH = ytdlpPath;
+  if (!process.env.YAR_YTDLP_PATH && existsSync(bundledYtDlpPath())) {
+    process.env.YAR_YTDLP_PATH = bundledYtDlpPath();
   }
 }
 
 configureBundledBinaries();
 
+const toolsDir = path.join(app.getPath("userData"), "tools", "yt-dlp");
 let mainWindow: BrowserWindow | null = null;
 const subscriptions = new Map<number, (event: JobEvent) => void>();
 
@@ -56,7 +71,7 @@ const orchestrator = new DownloadOrchestrator({
   appDataDir: app.getPath("userData")
 });
 
-interface RevealInFinderResult {
+interface RevealResult {
   ok: boolean;
   message?: string;
 }
@@ -65,13 +80,10 @@ function getRendererEntryPath(): string {
   return path.join(__dirname, "..", "dist-renderer", "index.html");
 }
 
-async function revealInFinder(targetPath: string): Promise<RevealInFinderResult> {
+async function revealItem(targetPath: string): Promise<RevealResult> {
   const normalized = targetPath?.trim();
   if (!normalized) {
-    return {
-      ok: false,
-      message: "No output file is available for this job yet."
-    };
+    return { ok: false, message: "This download has no file yet." };
   }
 
   try {
@@ -80,73 +92,128 @@ async function revealInFinder(targetPath: string): Promise<RevealInFinderResult>
     return { ok: true };
   } catch {
     const parentDir = path.dirname(normalized);
-
     try {
       await stat(parentDir);
-      const error = await shell.openPath(parentDir);
-      if (error) {
-        return {
-          ok: false,
-          message: "Could not open Finder for the output location."
-        };
-      }
-
-      return {
-        ok: false,
-        message: "Output file was not found. Opened the target folder instead."
-      };
+      await shell.openPath(parentDir);
+      return { ok: false, message: "The file was moved or renamed, so its folder was opened instead." };
     } catch {
-      return {
-        ok: false,
-        message: "Output path no longer exists. The file may have been moved or deleted."
-      };
+      return { ok: false, message: "The file and its folder no longer exist." };
     }
   }
 }
 
+// ---------- yt-dlp updates ----------
+
+function currentYtDlpVersion(): Promise<string | undefined> {
+  return orchestrator.getPreflight().then((report) => {
+    const version = report.binaries.find((item) => item.name === "yt-dlp")?.version;
+    return version?.replace(/^bundled:\s*/, "").trim();
+  });
+}
+
+/** Uses a yt-dlp downloaded by an earlier update when it is newer than the bundled one. */
+async function preferUpdatedYtDlp(): Promise<void> {
+  if (process.env.YAR_YTDLP_USER_OVERRIDE) {
+    return;
+  }
+  const installed = await readInstalledYtDlp(toolsDir);
+  if (!installed) {
+    return;
+  }
+  const bundled = await currentYtDlpVersion();
+  if (!bundled || compareYtDlpVersions(installed.version, bundled) > 0) {
+    process.env.YAR_YTDLP_PATH = installed.executable;
+    await orchestrator.getPreflight(true);
+  }
+}
+
+async function updateYtDlp(): Promise<ToolUpdateStatus> {
+  try {
+    const result = await checkForYtDlpUpdate({ toolsDir, currentVersion: await currentYtDlpVersion() });
+    await mkdir(toolsDir, { recursive: true });
+    await writeFile(path.join(toolsDir, "last-check"), String(Date.now()), "utf8");
+    if (result.updated && result.executable) {
+      process.env.YAR_YTDLP_PATH = result.executable;
+      await orchestrator.getPreflight(true);
+    }
+    const { executable: _executable, ...status } = result;
+    return status;
+  } catch (error) {
+    return { updated: false, message: error instanceof Error ? error.message : "Update failed." };
+  }
+}
+
+async function updateYtDlpIfStale(): Promise<void> {
+  try {
+    const last = Number(await readFile(path.join(toolsDir, "last-check"), "utf8"));
+    if (Date.now() - last < UPDATE_CHECK_INTERVAL_MS) {
+      return;
+    }
+  } catch {
+    // Never checked before.
+  }
+  await updateYtDlp();
+}
+
+// ---------- Window ----------
+
+function overlayColors(): { color: string; symbolColor: string } {
+  return nativeTheme.shouldUseDarkColors
+    ? { color: "#00000000", symbolColor: "#e8e8ea" }
+    : { color: "#00000000", symbolColor: "#1d1d1f" };
+}
+
+function windowChrome(): BrowserWindowConstructorOptions {
+  if (isMac) {
+    return {
+      titleBarStyle: "hiddenInset",
+      trafficLightPosition: { x: 18, y: 20 },
+      vibrancy: "sidebar",
+      visualEffectState: "followWindow",
+      backgroundColor: "#00000000"
+    };
+  }
+  if (isWindows) {
+    return {
+      titleBarStyle: "hidden",
+      titleBarOverlay: { ...overlayColors(), height: 52 },
+      backgroundMaterial: "mica"
+    };
+  }
+  return {};
+}
+
 async function createMainWindow(): Promise<void> {
   mainWindow = new BrowserWindow({
-    width: 1320,
-    height: 860,
-    minWidth: 980,
-    minHeight: 680,
-    titleBarStyle: "hiddenInset",
+    width: 1180,
+    height: 760,
+    minWidth: 900,
+    minHeight: 560,
+    show: false,
+    ...windowChrome(),
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: true
     }
   });
 
-  mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
-    console.error("Renderer failed to load", {
-      errorCode,
-      errorDescription,
-      validatedURL
-    });
-  });
+  mainWindow.once("ready-to-show", () => mainWindow?.show());
 
   mainWindow.webContents.on("preload-error", (_event, preloadPath, error) => {
-    console.error("Preload failed", {
-      preloadPath,
-      error: error?.message ?? String(error)
-    });
-  });
-
-  mainWindow.webContents.on("did-finish-load", async () => {
-    try {
-      const bridgeType = await mainWindow?.webContents.executeJavaScript("typeof window.audioRipper", true);
-      console.log("Renderer bridge type:", bridgeType);
-    } catch (error) {
-      console.error("Bridge probe failed", error);
-    }
+    console.error("Preload failed", { preloadPath, error: error?.message ?? String(error) });
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    if (url.startsWith("https://")) {
+      void shell.openExternal(url);
+    }
     return { action: "deny" };
   });
+
+  // Links dropped on the window should become downloads, not navigate away.
+  mainWindow.webContents.on("will-navigate", (event) => event.preventDefault());
 
   const devUrl = process.env.VITE_DEV_SERVER_URL;
   if (devUrl) {
@@ -156,51 +223,132 @@ async function createMainWindow(): Promise<void> {
   }
 }
 
+function applyTheme(theme: ThemePreference | undefined): void {
+  nativeTheme.themeSource = theme ?? "system";
+}
+
+function sendToWindow(channel: string): void {
+  mainWindow?.webContents.send(channel);
+}
+
+function buildMenu(): void {
+  const settingsItem: MenuItemConstructorOptions = {
+    label: isMac ? "Settings…" : "Settings",
+    accelerator: "CmdOrCtrl+,",
+    click: () => sendToWindow("app:open-settings")
+  };
+  const openFolderItem: MenuItemConstructorOptions = {
+    label: "Open Download Folder",
+    accelerator: "CmdOrCtrl+Shift+O",
+    click: () => void shell.openPath(orchestrator.getSettings().outputRoot)
+  };
+
+  const template: MenuItemConstructorOptions[] = [
+    ...(isMac
+      ? [{
+          label: app.name,
+          submenu: [
+            { role: "about" },
+            { type: "separator" },
+            settingsItem,
+            { type: "separator" },
+            { role: "services" },
+            { type: "separator" },
+            { role: "hide" },
+            { role: "hideOthers" },
+            { role: "unhide" },
+            { type: "separator" },
+            { role: "quit" }
+          ]
+        } satisfies MenuItemConstructorOptions]
+      : []),
+    {
+      label: "File",
+      submenu: [
+        {
+          label: "Paste Link and Download",
+          accelerator: "CmdOrCtrl+Shift+V",
+          click: () => sendToWindow("app:paste-and-rip")
+        },
+        openFolderItem,
+        ...(isMac ? [] : [{ type: "separator" } as const, settingsItem, { type: "separator" } as const, { role: "quit" } as const])
+      ]
+    },
+    { role: "editMenu" },
+    {
+      label: "View",
+      submenu: [
+        { role: "reload" },
+        { role: "toggleDevTools" },
+        { type: "separator" },
+        { role: "resetZoom" },
+        { role: "zoomIn" },
+        { role: "zoomOut" },
+        { type: "separator" },
+        { role: "togglefullscreen" }
+      ]
+    },
+    { role: "windowMenu" },
+    {
+      role: "help",
+      submenu: [{ label: "Report an Issue", click: () => void shell.openExternal(ISSUES_URL) }]
+    }
+  ];
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+// ---------- IPC ----------
+
 function bindIpc(): void {
-  ipcMain.handle("system:preflight", async () => {
-    return runPreflight();
+  ipcMain.handle("system:preflight", async (_event, force?: boolean) => orchestrator.getPreflight(Boolean(force)));
+  ipcMain.handle("system:updateYtDlp", async () => updateYtDlp());
+  ipcMain.handle("system:showItem", async (_event, targetPath: string) => revealItem(targetPath));
+  ipcMain.handle("system:openFolder", async (_event, folder: string) => {
+    await mkdir(folder, { recursive: true }).catch(() => undefined);
+    const error = await shell.openPath(folder);
+    return error ? { ok: false, message: error } : { ok: true };
   });
-
-  ipcMain.handle("system:showInFinder", async (_event, targetPath: string) => {
-    return revealInFinder(targetPath);
+  ipcMain.handle("system:chooseFolder", async (event, current?: string) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const options = {
+      title: "Choose where downloads are saved",
+      defaultPath: current,
+      properties: ["openDirectory", "createDirectory"] as Array<"openDirectory" | "createDirectory">
+    };
+    const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
+    return result.canceled ? undefined : result.filePaths[0];
   });
+  ipcMain.handle("system:readClipboard", async () => (await clipboard.readText()).trim());
+  ipcMain.handle("app:info", async () => ({ version: app.getVersion(), platform: process.platform }));
 
-  ipcMain.handle("job:create", async (_event, payload: CreateJobInput) => {
-    return orchestrator.createJob(payload);
-  });
-
-  ipcMain.handle("job:list", async () => {
-    return orchestrator.listJobs();
-  });
-
-  ipcMain.handle("job:cancel", async (_event, jobId: string) => {
-    return orchestrator.cancelJob(jobId);
-  });
-
+  ipcMain.handle("job:create", async (_event, payload: CreateJobInput) => orchestrator.createJob(payload));
+  ipcMain.handle("job:list", async () => orchestrator.listJobs());
+  ipcMain.handle("job:cancel", async (_event, jobId: string) => orchestrator.cancelJob(jobId));
   ipcMain.handle("job:delete", async (_event, jobId: string) => {
     await orchestrator.deleteJob(jobId);
     return orchestrator.listJobs();
   });
-
+  ipcMain.handle("job:clearFinished", async () => {
+    await orchestrator.clearFinished();
+    return orchestrator.listJobs();
+  });
   ipcMain.handle("job:clearHistory", async () => {
     await orchestrator.clearHistory();
     return orchestrator.listJobs();
   });
 
-  ipcMain.handle("metadata:resolveCandidates", async (_event, payload: ResolveCandidatesInput) => {
-    return orchestrator.resolveMetadataCandidates(payload);
-  });
+  ipcMain.handle("metadata:resolveCandidates", async (_event, payload: ResolveCandidatesInput) =>
+    orchestrator.resolveMetadataCandidates(payload)
+  );
+  ipcMain.handle("metadata:chooseCandidate", async (_event, payload: ChooseMetadataInput) =>
+    orchestrator.chooseMetadata(payload)
+  );
 
-  ipcMain.handle("metadata:chooseCandidate", async (_event, payload: ChooseMetadataInput) => {
-    return orchestrator.chooseMetadata(payload);
-  });
-
-  ipcMain.handle("settings:get", async () => {
-    return orchestrator.getSettings();
-  });
-
+  ipcMain.handle("settings:get", async () => orchestrator.getSettings());
   ipcMain.handle("settings:update", async (_event, payload: Settings) => {
     await orchestrator.updateSettings(payload);
+    applyTheme(payload.theme);
     return orchestrator.getSettings();
   });
 
@@ -209,20 +357,17 @@ function bindIpc(): void {
     if (!win) {
       return false;
     }
-
     if (win.isMaximized()) {
       win.unmaximize();
     } else {
       win.maximize();
     }
-
     return win.isMaximized();
   });
 
   ipcMain.handle("job:subscribeStatus", async (event) => {
     const sender = event.sender;
     const key = sender.id;
-
     if (subscriptions.has(key)) {
       return true;
     }
@@ -249,30 +394,70 @@ function bindIpc(): void {
 
   ipcMain.handle("job:unsubscribeStatus", async (event) => {
     const sender: WebContents = event.sender;
-    const key = sender.id;
-    const handler = subscriptions.get(key);
+    const handler = subscriptions.get(sender.id);
     if (handler) {
       orchestrator.off("event", handler);
-      subscriptions.delete(key);
+      subscriptions.delete(sender.id);
     }
     return true;
   });
 }
 
-app.whenReady().then(async () => {
-  await orchestrator.initialize();
-  bindIpc();
-  await createMainWindow();
+// ---------- Lifecycle ----------
 
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      void createMainWindow();
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  if (process.env.YAR_YTDLP_PATH && process.env.YAR_YTDLP_PATH !== bundledYtDlpPath()) {
+    process.env.YAR_YTDLP_USER_OVERRIDE = "1";
+  }
+
+  app.on("second-instance", () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) {
+        mainWindow.restore();
+      }
+      mainWindow.focus();
     }
   });
-});
 
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    app.quit();
-  }
-});
+  app.whenReady().then(async () => {
+    await orchestrator.initialize();
+    applyTheme(orchestrator.getSettings().theme);
+    bindIpc();
+    buildMenu();
+    await createMainWindow();
+
+    nativeTheme.on("updated", () => {
+      if (isWindows && mainWindow) {
+        mainWindow.setTitleBarOverlay({ ...overlayColors(), height: 52 });
+      }
+    });
+
+    void preferUpdatedYtDlp()
+      .then(() => updateYtDlpIfStale())
+      .catch((error: unknown) => console.error("yt-dlp update check failed", error));
+
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        void createMainWindow();
+      }
+    });
+  });
+
+  let flushed = false;
+  app.on("before-quit", (event) => {
+    if (flushed) {
+      return;
+    }
+    event.preventDefault();
+    flushed = true;
+    void orchestrator.flush().finally(() => app.quit());
+  });
+
+  app.on("window-all-closed", () => {
+    if (!isMac) {
+      app.quit();
+    }
+  });
+}

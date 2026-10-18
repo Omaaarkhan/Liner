@@ -9,27 +9,46 @@ import type {
   ExtractionJobRecord,
   ExtractionWarning,
   JobEvent,
+  JobProgress,
   MetadataCandidate,
   PreflightReport,
   ResolveCandidatesInput,
   ResolveCandidatesOutput,
   Settings,
-  TrackMetadata
+  ProbeAudioInfo,
+  TrackMetadata,
+  YouTubeVideoInfo
 } from "@audio-ripper/shared";
-import { probeAudio } from "../services/ffprobe.js";
 import { HistoryStore } from "../services/history-store.js";
 import { moveIntoLibrary, moveVideoIntoLibrary } from "../services/library.js";
 import { resolveCandidates, resolveCandidatesFromVideo } from "../services/metadata.js";
 import { DEFAULT_SETTINGS, SettingsStore } from "../services/settings-store.js";
 import { applyTags } from "../services/tagging.js";
 import { runPreflight } from "../services/binaries.js";
-import { analyzeVideo, downloadAudio, downloadVideoAsMp4 } from "../services/youtube.js";
+import { analyzeVideo, downloadAudio, downloadVideoAsMp4, parseProgressLine } from "../services/youtube.js";
 import { ensureDir } from "../utils/fs.js";
 import { CommandExecutionError } from "../utils/process.js";
 
 interface PendingChoiceContext {
   tempDir: string;
   downloadedAudioPath: string;
+}
+
+const LOG_FLUSH_MS = 200;
+const PROGRESS_EMIT_MS = 150;
+const FINISHED_STATUSES = new Set(["completed", "failed", "cancelled"]);
+
+/** Audio details come straight from the format yt-dlp chose, so no separate probe is needed. */
+function probeInfoFromFormat(video: YouTubeVideoInfo): ProbeAudioInfo {
+  const format = video.selectedFormat;
+  return {
+    codec: format.acodec,
+    container: format.ext,
+    bitrate: format.abr ? Math.round(format.abr * 1000) : undefined,
+    duration: video.duration,
+    sampleRate: format.asr,
+    channels: format.audioChannels
+  };
 }
 
 function nowIso(): string {
@@ -65,6 +84,10 @@ export class DownloadOrchestrator extends EventEmitter {
   private initialized = false;
   private preflightReady = false;
   private preflightPromise: Promise<PreflightReport> | undefined;
+  private lastPreflight: PreflightReport | undefined;
+  private readonly pendingLogLines = new Map<string, string[]>();
+  private logFlushTimer: NodeJS.Timeout | undefined;
+  private readonly lastProgressEmit = new Map<string, number>();
 
   constructor(options: DownloadOrchestratorOptions) {
     super();
@@ -106,6 +129,25 @@ export class DownloadOrchestrator extends EventEmitter {
     return resolveCandidates(input);
   }
 
+  /** Tool availability, cached after the first check unless force is set. */
+  async getPreflight(force = false): Promise<PreflightReport> {
+    if (force) {
+      this.preflightReady = false;
+      this.lastPreflight = undefined;
+    }
+    if (this.lastPreflight && !this.preflightPromise) {
+      return this.lastPreflight;
+    }
+    this.schedulePreflight();
+    return this.preflightPromise ?? runPreflight();
+  }
+
+  /** Writes pending history to disk. Call before quitting. */
+  async flush(): Promise<void> {
+    this.flushLogs();
+    await this.historyStore.flush();
+  }
+
   private schedulePreflight(): void {
     if (this.preflightReady || this.preflightPromise) {
       return;
@@ -113,6 +155,8 @@ export class DownloadOrchestrator extends EventEmitter {
 
     this.preflightPromise = runPreflight()
       .then((report) => {
+        this.lastPreflight = report;
+        this.preflightPromise = undefined;
         if (report.allReady) {
           this.preflightReady = true;
         }
@@ -138,13 +182,12 @@ export class DownloadOrchestrator extends EventEmitter {
     const preflight = await pending;
     if (preflight.allReady) {
       this.preflightReady = true;
-      this.preflightPromise = undefined;
       return;
     }
 
-    this.preflightPromise = undefined;
-    const missing = preflight.binaries.filter((item) => !item.available).map((item) => item.name).join(", ");
-    throw new Error(`Required binaries are missing: ${missing}. Install with: brew install yt-dlp ffmpeg`);
+    const missing = preflight.binaries.filter((item) => !item.available);
+    const names = missing.map((item) => item.name).join(" and ");
+    throw new Error(`${names} could not be started. ${missing[0]?.installHint ?? ""}`.trim());
   }
 
   private async persistAndEmit(job: ExtractionJobRecord): Promise<void> {
@@ -157,6 +200,10 @@ export class DownloadOrchestrator extends EventEmitter {
     this.emit("event", event);
   }
 
+  /**
+   * Records tool output. Progress lines become throttled progress events; other
+   * lines are batched so the window gets one message per flush, not one per line.
+   */
   private appendLog(jobId: string, line: string): void {
     const job = this.jobs.get(jobId);
     if (!job) {
@@ -168,15 +215,55 @@ export class DownloadOrchestrator extends EventEmitter {
       if (!trimmed) {
         continue;
       }
-      job.logs = [...job.logs.slice(-249), `[${new Date().toLocaleTimeString()}] ${trimmed}`];
-      const event: JobEvent = {
-        type: "job-log",
-        jobId,
-        line: trimmed,
-        timestamp: nowIso()
-      };
+
+      const progress = parseProgressLine(trimmed);
+      if (progress) {
+        this.reportProgress(jobId, progress);
+        continue;
+      }
+
+      const stamped = `[${new Date().toLocaleTimeString()}] ${trimmed}`;
+      job.logs.push(stamped);
+      if (job.logs.length > 250) {
+        job.logs.splice(0, job.logs.length - 250);
+      }
+      const pending = this.pendingLogLines.get(jobId) ?? [];
+      pending.push(stamped);
+      this.pendingLogLines.set(jobId, pending);
+    }
+
+    if (!this.logFlushTimer && this.pendingLogLines.size > 0) {
+      this.logFlushTimer = setTimeout(() => this.flushLogs(), LOG_FLUSH_MS);
+    }
+  }
+
+  private flushLogs(): void {
+    if (this.logFlushTimer) {
+      clearTimeout(this.logFlushTimer);
+      this.logFlushTimer = undefined;
+    }
+    for (const [jobId, lines] of this.pendingLogLines) {
+      const event: JobEvent = { type: "job-log", jobId, lines };
       this.emit("event", event);
     }
+    this.pendingLogLines.clear();
+  }
+
+  private reportProgress(jobId: string, progress: JobProgress): void {
+    const job = this.jobs.get(jobId);
+    if (!job) {
+      return;
+    }
+    job.progress = progress;
+
+    const now = Date.now();
+    const last = this.lastProgressEmit.get(jobId) ?? 0;
+    if (now - last < PROGRESS_EMIT_MS && progress.fraction !== 1) {
+      return;
+    }
+    this.lastProgressEmit.set(jobId, now);
+    const event: JobEvent = { type: "job-progress", jobId, progress };
+    this.emit("event", event);
   }
 
   private async updateJob(jobId: string, patch: Partial<ExtractionJobRecord>): Promise<ExtractionJobRecord> {
@@ -190,6 +277,10 @@ export class DownloadOrchestrator extends EventEmitter {
       ...patch,
       updatedAt: nowIso()
     };
+    if (FINISHED_STATUSES.has(merged.status) || merged.status === "awaiting_user_choice") {
+      merged.progress = undefined;
+      this.lastProgressEmit.delete(jobId);
+    }
 
     await this.persistAndEmit(merged);
     return merged;
@@ -300,6 +391,16 @@ export class DownloadOrchestrator extends EventEmitter {
     return true;
   }
 
+  /** Removes finished, failed and cancelled jobs, leaving anything still running or waiting. */
+  async clearFinished(): Promise<void> {
+    for (const job of Array.from(this.jobs.values())) {
+      if (FINISHED_STATUSES.has(job.status)) {
+        this.jobs.delete(job.jobId);
+        await this.historyStore.delete(job.jobId);
+      }
+    }
+  }
+
   async clearHistory(): Promise<void> {
     for (const controller of this.controllers.values()) {
       controller.abort();
@@ -361,17 +462,17 @@ export class DownloadOrchestrator extends EventEmitter {
         throw new Error("Job disappeared from queue.");
       }
 
-      const videoInfo = await analyzeVideo(existing.request.url, existing.request.qualityMode);
+      tempDir = await mkdtemp(path.join(os.tmpdir(), "audio-ripper-"));
+      const { videoInfo, infoJsonPath } = await analyzeVideo(existing.request.url, existing.request.qualityMode, tempDir);
       await this.updateJob(jobId, {
         status: "downloading",
         videoInfo
       });
 
-      tempDir = await mkdtemp(path.join(os.tmpdir(), "audio-ripper-"));
-
       if (existing.request.qualityMode === "video_mp4") {
         const downloadedVideoPath = await downloadVideoAsMp4({
           url: existing.request.url,
+          infoJsonPath,
           tempDir,
           expectedVideoId: videoInfo.id,
           downloadSpeedProfile: existing.request.downloadSpeedProfile || "balanced",
@@ -397,6 +498,7 @@ export class DownloadOrchestrator extends EventEmitter {
 
       const downloadedAudioPath = await downloadAudio({
         url: existing.request.url,
+        infoJsonPath,
         formatId: videoInfo.selectedFormat.formatId,
         downloadSpeedProfile: existing.request.downloadSpeedProfile || "balanced",
         tempDir,
@@ -405,7 +507,7 @@ export class DownloadOrchestrator extends EventEmitter {
         onLog: (line) => this.appendLog(jobId, line)
       });
 
-      const probeInfo = await probeAudio(downloadedAudioPath);
+      const probeInfo = probeInfoFromFormat(videoInfo);
 
       await this.updateJob(jobId, {
         status: "resolving_metadata",
@@ -413,20 +515,21 @@ export class DownloadOrchestrator extends EventEmitter {
       });
 
       const metadataResolution = await resolveCandidatesFromVideo(videoInfo);
-      const bestCandidate = metadataResolution.autoSelected;
+      // Compare the top candidate with the user's own threshold, not the resolver's default.
+      const bestCandidate = metadataResolution.candidates[0];
 
       await this.updateJob(jobId, {
         metadataCandidates: metadataResolution.candidates
       });
 
       if (!bestCandidate || bestCandidate.score < this.settings.metadataAutoSelectThreshold) {
-        await this.updateJob(jobId, {
-          status: "awaiting_user_choice"
-        });
-
+        // Register the pending choice before announcing it, so an immediate answer finds it.
         this.pendingChoices.set(jobId, {
           tempDir,
           downloadedAudioPath
+        });
+        await this.updateJob(jobId, {
+          status: "awaiting_user_choice"
         });
         this.controllers.delete(jobId);
         tempDir = undefined;

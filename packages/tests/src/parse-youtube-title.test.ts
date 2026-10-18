@@ -3,9 +3,9 @@ import { parseYoutubeTitle } from "@audio-ripper/core";
 
 describe("parseYoutubeTitle", () => {
   it("extracts artist and title from hyphen format", () => {
-    const parsed = parseYoutubeTitle("Daft Punk - One More Time (Official Video)");
-    expect(parsed.artistHint).toBe("Daft Punk");
-    expect(parsed.title).toBe("One More Time");
+    const parsed = parseYoutubeTitle("Juniper Static - Low Tide Radio (Official Video)");
+    expect(parsed.artistHint).toBe("Juniper Static");
+    expect(parsed.title).toBe("Low Tide Radio");
   });
 
   it("falls back to raw title when separator is absent", () => {

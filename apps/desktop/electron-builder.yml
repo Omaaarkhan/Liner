@@ -1,21 +1,45 @@
-appId: com.audio-ripper.desktop
+# Release builds. Each platform is built on its own OS (see .github/workflows/release.yml)
+# because the bundled ffmpeg and yt-dlp are prepared for the machine running the build.
+appId: io.github.omaaarkhan.ytripper
 productName: YouTube Audio Ripper
-electronVersion: 34.0.0
+artifactName: "${productName}-${version}-${os}-${arch}.${ext}"
+electronVersion: 44.5.1
 directories:
   output: release
 files:
   - dist-electron/**/*
   - dist-renderer/**/*
 extraResources:
-  - from: vendor/bin
-    to: bin
+  - from: vendor/bin/${platform}-${arch}
+    to: bin/${platform}-${arch}
     filter:
       - "**/*"
+extraMetadata:
+  main: dist-electron/main.js
+
 mac:
   icon: build/icon.icns
   category: public.app-category.music
+  darkModeSupport: true
   target:
-    - dmg
-    - zip
-extraMetadata:
-  main: dist-electron/main.js
+    - target: dmg
+    - target: zip
+dmg:
+  title: "${productName}"
+
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  shortcutName: "${productName}"
+
+linux:
+  icon: build/icon.png
+  category: AudioVideo
+  target:
+    - AppImage

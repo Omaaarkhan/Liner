@@ -2,7 +2,15 @@ import type { BinaryStatus, PreflightReport } from "@audio-ripper/shared";
 import { runCommand } from "../utils/process.js";
 import { getBundledBinaryPath, resolveBinaryCommand } from "./binary-paths.js";
 
-const INSTALL_HINT = "Bundled binaries missing. Reinstall app or install manually: brew install yt-dlp ffmpeg";
+function installHint(): string {
+  if (process.platform === "darwin") {
+    return "Bundled tools are missing. Reinstall the app, or run: brew install yt-dlp ffmpeg";
+  }
+  if (process.platform === "win32") {
+    return "Bundled tools are missing. Reinstall the app, or run: winget install yt-dlp.yt-dlp Gyan.FFmpeg";
+  }
+  return "Bundled tools are missing. Reinstall the app, or install yt-dlp and ffmpeg with your package manager.";
+}
 
 async function getBinaryVersion(name: BinaryStatus["name"]): Promise<BinaryStatus> {
   try {
@@ -23,7 +31,7 @@ async function getBinaryVersion(name: BinaryStatus["name"]): Promise<BinaryStatu
     return {
       name,
       available: false,
-      installHint: INSTALL_HINT
+      installHint: installHint()
     };
   }
 }
@@ -31,7 +39,6 @@ async function getBinaryVersion(name: BinaryStatus["name"]): Promise<BinaryStatu
 export async function runPreflight(): Promise<PreflightReport> {
   const binaries = await Promise.all([
     getBinaryVersion("ffmpeg"),
-    getBinaryVersion("ffprobe"),
     getBinaryVersion("yt-dlp")
   ]);
 

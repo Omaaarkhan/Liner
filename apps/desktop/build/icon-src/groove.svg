@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Groove: a record whose label is a download arrow. Artwork fills the canvas; the macOS export masks it to the Big Sur grid. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5873f0"/>
+      <stop offset="1" stop-color="#2a3cad"/>
+    </linearGradient>
+    <radialGradient id="disc" cx="0.42" cy="0.38" r="0.7">
+      <stop offset="0" stop-color="#2a2a33"/>
+      <stop offset="1" stop-color="#121217"/>
+    </radialGradient>
+    <linearGradient id="label" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ff9150"/>
+      <stop offset="1" stop-color="#f2621f"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <circle cx="512" cy="530" r="372" fill="#000" opacity="0.22"/>
+  <circle cx="512" cy="512" r="372" fill="url(#disc)"/>
+  <g fill="none" stroke="#34343f" stroke-width="7">
+    <circle cx="512" cy="512" r="338"/>
+    <circle cx="512" cy="512" r="300"/>
+    <circle cx="512" cy="512" r="262"/>
+    <circle cx="512" cy="512" r="224"/>
+  </g>
+  <path d="M232 330 A340 340 0 0 1 470 176" fill="none" stroke="#ffffff" stroke-opacity="0.16" stroke-width="34" stroke-linecap="round"/>
+  <circle cx="512" cy="512" r="168" fill="url(#label)"/>
+  <path d="M512 418v158M446 512l66 66 66-66" fill="none" stroke="#16161c" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -9,7 +9,8 @@ export const DEFAULT_SETTINGS: Settings = {
   embedArtwork: true,
   downloadSpeedProfile: "balanced",
   metadataAutoSelectThreshold: 0.86,
-  filenameTemplate: "{trackNumber:02} - {title}"
+  filenameTemplate: "{trackNumber:02} - {title}",
+  theme: "system"
 };
 
 export class SettingsStore {

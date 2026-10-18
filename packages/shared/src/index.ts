@@ -1,5 +1,6 @@
 export type QualityMode = "source_fidelity" | "mp3_320_export" | "video_mp4";
 export type DownloadSpeedProfile = "safe" | "balanced" | "aggressive";
+export type ThemePreference = "system" | "light" | "dark";
 
 export type MetadataSource = "youtube" | "musicbrainz";
 
@@ -50,7 +51,7 @@ export interface ExtractionWarning {
 }
 
 export interface BinaryStatus {
-  name: "ffmpeg" | "ffprobe" | "yt-dlp";
+  name: "ffmpeg" | "yt-dlp";
   available: boolean;
   version?: string;
   installHint?: string;
@@ -69,6 +70,8 @@ export interface YouTubeFormatInfo {
   abr?: number;
   tbr?: number;
   filesize?: number;
+  asr?: number;
+  audioChannels?: number;
   audioQualityScore: number;
 }
 
@@ -93,6 +96,15 @@ export interface ProbeAudioInfo {
   channels?: number;
 }
 
+export interface JobProgress {
+  /** 0..1 when the total size is known. */
+  fraction?: number;
+  downloadedBytes?: number;
+  totalBytes?: number;
+  etaSeconds?: number;
+  speedBytesPerSecond?: number;
+}
+
 export interface ExtractionResult {
   jobId: string;
   status: JobStatus;
@@ -103,6 +115,7 @@ export interface ExtractionResult {
   selectedMetadata?: TrackMetadata;
   metadataCandidates?: MetadataCandidate[];
   error?: string;
+  progress?: JobProgress;
   createdAt: string;
   updatedAt: string;
 }
@@ -119,6 +132,7 @@ export interface Settings {
   downloadSpeedProfile: DownloadSpeedProfile;
   metadataAutoSelectThreshold: number;
   filenameTemplate: string;
+  theme: ThemePreference;
 }
 
 export interface ResolveCandidatesInput {
@@ -145,11 +159,24 @@ export interface JobStatusEvent {
   job: ExtractionJobRecord;
 }
 
+/** Log lines are batched; each line already carries its time prefix. */
 export interface JobLogEvent {
   type: "job-log";
   jobId: string;
-  line: string;
-  timestamp: string;
+  lines: string[];
 }
 
-export type JobEvent = JobStatusEvent | JobLogEvent;
+export interface JobProgressEvent {
+  type: "job-progress";
+  jobId: string;
+  progress: JobProgress;
+}
+
+export type JobEvent = JobStatusEvent | JobLogEvent | JobProgressEvent;
+
+export interface ToolUpdateStatus {
+  currentVersion?: string;
+  latestVersion?: string;
+  updated: boolean;
+  message?: string;
+}
