@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type JSX } from "react";
 import type { ExtractionJobRecord, MetadataCandidate, QualityMode } from "@audio-ripper/shared";
 import { Inspector } from "./components/Inspector";
 import { JobList } from "./components/JobList";
