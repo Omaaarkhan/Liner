@@ -42,7 +42,7 @@ const __dirname = path.dirname(__filename);
 const platformArch = `${process.platform}-${process.arch}`;
 const isMac = process.platform === "darwin";
 const isWindows = process.platform === "win32";
-const ISSUES_URL = "https://github.com/Omaaarkhan/YT-RIPPER/issues";
+const ISSUES_URL = "https://github.com/Omaaarkhan/Liner/issues";
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 function bundledBinRoot(): string {

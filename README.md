@@ -31,7 +31,7 @@ Single videos only for now. Playlists and channels are not supported yet.
 
 ## Install
 
-Download the latest `.dmg` (macOS) or `.exe` (Windows) from [Releases](https://github.com/Omaaarkhan/YT-RIPPER/releases).
+Download the latest `.dmg` (macOS) or `.exe` (Windows) from [Releases](https://github.com/Omaaarkhan/Liner/releases).
 
 The builds are not code-signed yet:
 
