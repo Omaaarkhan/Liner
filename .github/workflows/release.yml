@@ -34,7 +34,7 @@ jobs:
         env:
           # Builds are unsigned until signing secrets are added.
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           draft: true
           files: |
