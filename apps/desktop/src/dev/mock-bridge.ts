@@ -21,7 +21,7 @@ function baseJob(id: string, partial: Partial<ExtractionJobRecord>): ExtractionJ
     logs: ["[10:02:11] Fetching details", "[10:02:12] Picked format 251 (opus, 160 kbps)", "[10:02:19] Download finished"],
     createdAt: iso(30),
     updatedAt: iso(30),
-    request: { url: `https://www.youtube.com/watch?v=${id}`, outputRoot: "/Users/you/Music/Ripper", qualityMode: "source_fidelity", embedArtwork: true },
+    request: { url: `https://www.youtube.com/watch?v=${id}`, outputRoot: "/Users/you/Music/Liner", qualityMode: "source_fidelity", embedArtwork: true },
     ...partial
   };
 }
@@ -78,7 +78,7 @@ let jobs: ExtractionJobRecord[] = [
   }),
   baseJob("done1", {
     createdAt: iso(40),
-    outputPath: "/Users/you/Music/Ripper/Marlowe & the Tides/Harbour Lights/04 - Night Swim.webm",
+    outputPath: "/Users/you/Music/Liner/Marlowe & the Tides/Harbour Lights/04 - Night Swim.webm",
     selectedMetadata: { title: "Night Swim", artist: "Marlowe & the Tides", album: "Harbour Lights", trackNumber: 4, year: 2022, genre: "Indie" },
     metadataCandidates: [{ ...reviewCandidates[0], metadata: { title: "Night Swim", artist: "Marlowe & the Tides", album: "Harbour Lights", trackNumber: 4, year: 2022 } }],
     videoInfo: {
@@ -93,8 +93,8 @@ let jobs: ExtractionJobRecord[] = [
   }),
   baseJob("vid1", {
     createdAt: iso(90),
-    request: { url: "https://www.youtube.com/watch?v=vid1", outputRoot: "/Users/you/Music/Ripper", qualityMode: "video_mp4", embedArtwork: false },
-    outputPath: "/Users/you/Music/Ripper/Videos/Studio Session No. 4.mp4",
+    request: { url: "https://www.youtube.com/watch?v=vid1", outputRoot: "/Users/you/Music/Liner", qualityMode: "video_mp4", embedArtwork: false },
+    outputPath: "/Users/you/Music/Liner/Videos/Studio Session No. 4.mp4",
     videoInfo: {
       id: "vid1",
       title: "Studio Session No. 4",
@@ -114,7 +114,7 @@ let jobs: ExtractionJobRecord[] = [
 ];
 
 let settings: Settings = {
-  outputRoot: "/Users/you/Music/Ripper",
+  outputRoot: "/Users/you/Music/Liner",
   qualityMode: "source_fidelity",
   embedArtwork: true,
   downloadSpeedProfile: "balanced",
@@ -158,7 +158,7 @@ export const mockBridge: RipperBridge = {
   updateYtDlp: async () => ({ updated: false, currentVersion: "2026.08.19", latestVersion: "2026.08.19", message: "yt-dlp is up to date." }),
   showItem: async () => ({ ok: true }),
   openFolder: async () => ({ ok: true }),
-  chooseFolder: async () => "/Users/you/Music/Ripper",
+  chooseFolder: async () => "/Users/you/Music/Liner",
   createJob: async (payload) => {
     const job = baseJob(`new${Date.now()}`, { status: "analyzing", request: payload, createdAt: new Date().toISOString(), logs: [] });
     jobs = [job, ...jobs];
@@ -191,7 +191,7 @@ export const mockBridge: RipperBridge = {
     const job = jobs.find((item) => item.jobId === jobId)!;
     job.status = "completed";
     job.selectedMetadata = candidate.metadata;
-    job.outputPath = `/Users/you/Music/Ripper/${candidate.metadata.artist}/${candidate.metadata.album}/${candidate.metadata.title}.webm`;
+    job.outputPath = `/Users/you/Music/Liner/${candidate.metadata.artist}/${candidate.metadata.album}/${candidate.metadata.title}.webm`;
     emit({ type: "job-status", job: clone(job) });
     return clone(job);
   },

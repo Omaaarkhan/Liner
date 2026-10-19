@@ -1,8 +1,20 @@
-# YouTube Audio Ripper
+<p align="center"><img src="apps/desktop/build/icon.png" width="128" alt="Liner app icon: a record with a download arrow on its label"></p>
 
-A desktop app for macOS and Windows that saves a YouTube video as high-quality audio or as an MP4, finds the right song tags on MusicBrainz, adds cover art, and files everything into a tidy music folder.
+# Liner
 
-<p align="center"><img src="apps/desktop/build/icon.png" width="128" alt="App icon: a record with a download arrow on its label"></p>
+A desktop app for macOS and Windows that saves a YouTube video as high-quality audio or as an MP4, finds the right song tags on MusicBrainz, adds cover art, and files everything into a tidy music folder. The name comes from liner notes: the credits and artwork that come with an album, which is the part Liner fills in for you.
+
+![Liner reviewing a match: the video title on the left, the MusicBrainz tags that will be saved on the right](docs/screenshots/review-light.png)
+
+<details>
+<summary>Dark mode and a finished download</summary>
+
+![Liner in dark mode](docs/screenshots/review-dark.png)
+![A finished download with its details](docs/screenshots/finished-light.png)
+
+</details>
+
+Screenshots use made-up artists and songs.
 
 ## What it does
 

@@ -4,7 +4,7 @@ import path from "node:path";
 import type { Settings } from "@audio-ripper/shared";
 
 export const DEFAULT_SETTINGS: Settings = {
-  outputRoot: path.join(os.homedir(), "Downloads", "YouTube Audio Ripper"),
+  outputRoot: path.join(os.homedir(), "Music", "Liner"),
   qualityMode: "source_fidelity",
   embedArtwork: true,
   downloadSpeedProfile: "balanced",

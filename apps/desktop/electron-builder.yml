@@ -1,7 +1,7 @@
 # Release builds. Each platform is built on its own OS (see .github/workflows/release.yml)
 # because the bundled ffmpeg and yt-dlp are prepared for the machine running the build.
 appId: io.github.omaaarkhan.ytripper
-productName: YouTube Audio Ripper
+productName: Liner
 artifactName: "${productName}-${version}-${os}-${arch}.${ext}"
 electronVersion: 44.5.1
 directories:

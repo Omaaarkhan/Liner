@@ -32,6 +32,11 @@ import type {
   ToolUpdateStatus
 } from "@audio-ripper/shared";
 
+// The app is called Liner, but its data folder keeps the original package name so
+// existing settings and history carry over (~/Library/Application Support/@audio-ripper/desktop).
+app.setName("Liner");
+app.setPath("userData", path.join(app.getPath("appData"), "@audio-ripper", "desktop"));
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const platformArch = `${process.platform}-${process.arch}`;
