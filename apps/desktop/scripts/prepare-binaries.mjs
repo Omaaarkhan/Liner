@@ -2,7 +2,7 @@
 // Output: vendor/bin/<platform>-<arch>/ffmpeg[.exe] and vendor/bin/<platform>-<arch>/yt-dlp/<executable>
 import { execFileSync } from "node:child_process";
 import { createWriteStream } from "node:fs";
-import { chmod, copyFile, mkdir, rename, rm, stat } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdir, readdir, rename, rm, stat, symlink } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { Readable } from "node:stream";
@@ -67,11 +67,55 @@ async function prepareFfmpeg() {
   return out;
 }
 
+async function isRealDirectory(filePath) {
+  try {
+    return (await lstat(filePath)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+// The yt-dlp macOS zip stores Python.framework without its symlinks, so every
+// version link is a full copy. codesign rejects that layout ("bundle format is
+// ambiguous"), which breaks signing the app. Put the standard links back.
+async function restoreFrameworkSymlinks(internalDir) {
+  for (const entry of await readdir(internalDir)) {
+    if (!entry.endsWith(".framework")) {
+      continue;
+    }
+    const framework = path.join(internalDir, entry);
+    const versionsDir = path.join(framework, "Versions");
+    if (!(await isRealDirectory(path.join(versionsDir, "Current")))) {
+      continue;
+    }
+    const version = (await readdir(versionsDir)).find((name) => name !== "Current");
+    if (!version) {
+      continue;
+    }
+    await rm(path.join(versionsDir, "Current"), { recursive: true, force: true });
+    await symlink(version, path.join(versionsDir, "Current"));
+    for (const name of await readdir(path.join(versionsDir, version))) {
+      await rm(path.join(framework, name), { recursive: true, force: true });
+      await symlink(path.join("Versions", "Current", name), path.join(framework, name));
+    }
+    // PyInstaller also links the library itself next to the framework.
+    const binaryName = entry.replace(/\.framework$/, "");
+    const looseBinary = path.join(internalDir, binaryName);
+    if (await exists(looseBinary)) {
+      await rm(looseBinary, { force: true });
+      await symlink(path.join(entry, "Versions", "Current", binaryName), looseBinary);
+    }
+  }
+}
+
 async function prepareYtDlp() {
   const asset = ytDlpAsset();
   const ytDir = path.join(targetDir, "yt-dlp");
   const executable = path.join(ytDir, asset.executable);
   if ((await exists(executable)) && !process.env.YAR_REFRESH_YTDLP) {
+    if (process.platform === "darwin") {
+      await restoreFrameworkSymlinks(path.join(ytDir, "_internal"));
+    }
     return executable;
   }
 
@@ -83,6 +127,9 @@ async function prepareYtDlp() {
     // bsdtar extracts zip files on macOS and Windows 10+.
     execFileSync("tar", ["-xf", archivePath, "-C", ytDir], { stdio: "inherit" });
     await rm(archivePath, { force: true });
+    if (process.platform === "darwin") {
+      await restoreFrameworkSymlinks(path.join(ytDir, "_internal"));
+    }
   } else {
     await downloadFile(asset.url, executable);
   }
