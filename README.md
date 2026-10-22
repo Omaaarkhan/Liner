@@ -33,9 +33,14 @@ Single videos only for now. Playlists and channels are not supported yet.
 
 Download the latest `.dmg` (macOS) or `.exe` (Windows) from [Releases](https://github.com/Omaaarkhan/Liner/releases).
 
-The builds are not code-signed yet:
+The builds are not signed with an Apple Developer ID or a Windows certificate yet, so the first launch needs one extra step:
 
-- **macOS:** the first time, right-click the app in Applications and choose **Open**, then **Open** again.
+- **macOS:** drag Liner to Applications and open it. When macOS says it can't verify the app, click **Done**, then go to **System Settings → Privacy & Security**, scroll down and click **Open Anyway** next to Liner. On macOS 14 and earlier you can instead right-click the app and choose **Open**, then **Open** again.
+- **macOS, if it says "Liner is damaged and can't be opened":** this comes from the quarantine flag your browser adds to downloads (the first 0.2.1 Mac builds also had an incomplete signature). Clear it in Terminal, then open the app normally:
+
+  ```bash
+  xattr -cr /Applications/Liner.app
+  ```
 - **Windows:** if SmartScreen appears, choose **More info**, then **Run anyway**.
 
 ## Build from source

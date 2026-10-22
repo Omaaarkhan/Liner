@@ -21,6 +21,11 @@ mac:
   icon: build/icon.icns
   category: public.app-category.music
   darkModeSupport: true
+  # Ad-hoc signature ("-") until there is a Developer ID. Without any signature
+  # Apple Silicon reports the downloaded app as "damaged". The default
+  # entitlements include disable-library-validation, which ad-hoc signing with
+  # the hardened runtime needs.
+  identity: "-"
   target:
     - target: dmg
     - target: zip

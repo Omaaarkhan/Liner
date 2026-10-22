@@ -5,6 +5,10 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to rebuild and replace the files of, e.g. v0.2.1"
+        required: true
 
 permissions:
   contents: write
@@ -32,11 +36,13 @@ jobs:
       # electron-builder only publishes when GH_TOKEN is set, so this just builds.
       - run: npm run ${{ matrix.script }}
         env:
-          # Builds are unsigned until signing secrets are added.
+          # No Developer ID yet: macOS builds get the ad-hoc signature set in
+          # electron-builder.yml, and Windows builds stay unsigned.
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
       - uses: softprops/action-gh-release@v3
         with:
           draft: true
+          tag_name: ${{ inputs.tag || github.ref_name }}
           files: |
             apps/desktop/release/*.dmg
             apps/desktop/release/*.zip
