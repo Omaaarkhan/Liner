@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { TrimRange } from "@audio-ripper/shared";
 import { CommandExecutionError, runCommand } from "../utils/process.js";
@@ -55,6 +56,42 @@ export async function readWaveform(inputPath: string, buckets = 800, signal?: Ab
 
   const loudest = Math.max(...peaks, 1e-6);
   return { duration, peaks: peaks.map((value) => Math.round((value / loudest) * 1000) / 1000) };
+}
+
+interface InfoFormat {
+  url?: string;
+  protocol?: string;
+  vcodec?: string;
+  height?: number;
+}
+
+/** Height the preview stream aims for: enough to recognise a scene, cheap to stream. */
+const PREVIEW_HEIGHT = 360;
+
+/**
+ * Picks a small progressive video stream from yt-dlp's saved extraction, for
+ * showing the picture while an audio-only download is trimmed. H.264 is
+ * preferred because every Chromium build decodes it in hardware.
+ */
+export function pickPreviewFormat(formats: InfoFormat[] = []): string | undefined {
+  const playable = formats.filter(
+    (format) => format.url && /^https?$/.test(format.protocol ?? "") && format.vcodec && format.vcodec !== "none" && (format.height ?? 0) > 0
+  );
+  const score = (format: InfoFormat): number =>
+    Math.abs((format.height ?? 0) - PREVIEW_HEIGHT) + (format.vcodec?.startsWith("avc1") ? 0 : format.vcodec?.startsWith("vp") ? 50 : 100);
+  return playable.sort((a, b) => score(a) - score(b))[0]?.url;
+}
+
+export async function readPreviewUrl(infoJsonPath: string | undefined): Promise<string | undefined> {
+  if (!infoJsonPath) {
+    return undefined;
+  }
+  try {
+    const info = JSON.parse(await readFile(infoJsonPath, "utf8")) as { formats?: InfoFormat[] };
+    return pickPreviewFormat(info.formats);
+  } catch {
+    return undefined;
+  }
 }
 
 /** Clamps a requested range to the file and rounds it to milliseconds. */

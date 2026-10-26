@@ -99,6 +99,9 @@ export function TrimEditor({ job, loadSource, onApply, onCancel }: TrimEditorPro
   const [saving, setSaving] = useState<"clip" | "whole" | null>(null);
   const [width, setWidth] = useState(320);
   const mediaRef = useRef<HTMLVideoElement & HTMLAudioElement>(null);
+  // Audio-only downloads show a muted YouTube stream as the picture, kept in step with the audio.
+  const pictureRef = useRef<HTMLVideoElement>(null);
+  const [pictureFailed, setPictureFailed] = useState(false);
   const trackRef = useRef<HTMLDivElement>(null);
   const drag = useRef<{ mode: DragMode; offset: number; originX: number; moved: boolean } | null>(null);
   const frame = useRef<number | undefined>(undefined);
@@ -150,10 +153,14 @@ export function TrimEditor({ job, loadSource, onApply, onCancel }: TrimEditorPro
     if (media && Number.isFinite(seconds)) {
       media.currentTime = seconds;
     }
+    if (pictureRef.current && Number.isFinite(seconds)) {
+      pictureRef.current.currentTime = seconds;
+    }
   }, []);
 
   const pause = useCallback(() => {
     mediaRef.current?.pause();
+    pictureRef.current?.pause();
     window.cancelAnimationFrame(frame.current ?? 0);
     setPlaying(false);
   }, []);
@@ -170,6 +177,10 @@ export function TrimEditor({ job, loadSource, onApply, onCancel }: TrimEditorPro
       return;
     }
     setPlayhead(media.currentTime);
+    const picture = pictureRef.current;
+    if (picture && Math.abs(picture.currentTime - media.currentTime) > 0.3) {
+      picture.currentTime = media.currentTime;
+    }
     frame.current = window.requestAnimationFrame(tick);
   }, [pause, seek]);
 
@@ -185,6 +196,10 @@ export function TrimEditor({ job, loadSource, onApply, onCancel }: TrimEditorPro
     const { start, end } = rangeRef.current;
     const from = playhead >= start && playhead < end - 0.05 ? playhead : start;
     media.currentTime = from;
+    if (pictureRef.current) {
+      pictureRef.current.currentTime = from;
+      void pictureRef.current.play().catch(() => undefined);
+    }
     void media.play().then(() => {
       setPlaying(true);
       frame.current = window.requestAnimationFrame(tick);
@@ -329,7 +344,27 @@ export function TrimEditor({ job, loadSource, onApply, onCancel }: TrimEditorPro
           ) : null}
         </div>
       ) : source ? (
-        <audio ref={mediaRef} src={source.mediaUrl} preload="auto" onPause={() => setPlaying(false)} />
+        <>
+          {source.previewUrl && !pictureFailed ? (
+            <div className="trim-preview">
+              <video
+                ref={pictureRef}
+                src={source.previewUrl}
+                poster={job.videoInfo?.thumbnail}
+                muted
+                preload="auto"
+                playsInline
+                onClick={togglePlay}
+                onError={() => setPictureFailed(true)}
+                // A seek swaps the poster for the frame at the playhead.
+                onLoadedData={(event) => {
+                  event.currentTarget.currentTime = mediaRef.current?.currentTime ?? 0;
+                }}
+              />
+            </div>
+          ) : null}
+          <audio ref={mediaRef} src={source.mediaUrl} preload="auto" onPause={() => setPlaying(false)} />
+        </>
       ) : null}
 
       <div className="trim-intro">

@@ -177,6 +177,11 @@ export interface TrimSource {
   duration: number;
   /** Loudness per slice of the file, 0..1, evenly spaced over the duration. */
   peaks: number[];
+  /**
+   * For audio-only downloads: a small video stream straight from YouTube, so the
+   * editor can show the picture while the downloaded audio plays.
+   */
+  previewUrl?: string;
 }
 
 export interface CreateJobInput extends ExtractionRequest {}

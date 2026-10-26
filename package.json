@@ -1,6 +1,6 @@
 {
   "name": "youtube-audio-ripper",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "description": "Desktop app for high-fidelity YouTube audio extraction and metadata tagging",
   "workspaces": [
