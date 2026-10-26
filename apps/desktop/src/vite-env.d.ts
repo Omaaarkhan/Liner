@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 
 import type {
+  ApplyTrimInput,
   ChooseMetadataInput,
   CreateJobInput,
   ExtractionJobRecord,
@@ -9,7 +10,8 @@ import type {
   ResolveCandidatesInput,
   ResolveCandidatesOutput,
   Settings,
-  ToolUpdateStatus
+  ToolUpdateStatus,
+  TrimSource
 } from "@audio-ripper/shared";
 
 export interface ActionResult {
@@ -31,6 +33,8 @@ export interface RipperBridge {
   listJobs: () => Promise<ExtractionJobRecord[]>;
   cancelJob: (jobId: string) => Promise<ExtractionJobRecord | undefined>;
   deleteJob: (jobId: string) => Promise<ExtractionJobRecord[]>;
+  trimSource: (jobId: string) => Promise<TrimSource>;
+  applyTrim: (payload: ApplyTrimInput) => Promise<ExtractionJobRecord>;
   clearFinished: () => Promise<ExtractionJobRecord[]>;
   clearHistory: () => Promise<ExtractionJobRecord[]>;
   resolveCandidates: (payload: ResolveCandidatesInput) => Promise<ResolveCandidatesOutput>;

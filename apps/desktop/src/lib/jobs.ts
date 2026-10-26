@@ -12,14 +12,19 @@ export const VIEWS: Array<{ id: ViewId; label: string }> = [
   { id: "failed", label: "Failed" }
 ];
 
-const ACTIVE: JobStatus[] = ["queued", "analyzing", "downloading", "resolving_metadata", "tagging"];
+const ACTIVE: JobStatus[] = ["queued", "analyzing", "downloading", "trimming", "resolving_metadata", "tagging"];
 
 export function isActive(job: ExtractionJobRecord): boolean {
   return ACTIVE.includes(job.status);
 }
 
 export function isCancelable(job: ExtractionJobRecord): boolean {
-  return isActive(job) || job.status === "awaiting_user_choice";
+  return isActive(job) || needsReview(job);
+}
+
+/** Waiting on the user: either a tag choice or a trim. */
+export function needsReview(job: ExtractionJobRecord): boolean {
+  return job.status === "awaiting_user_choice" || job.status === "awaiting_trim";
 }
 
 export function isVideo(job: ExtractionJobRecord): boolean {
@@ -33,7 +38,7 @@ export function inView(job: ExtractionJobRecord, view: ViewId): boolean {
     case "active":
       return isActive(job);
     case "review":
-      return job.status === "awaiting_user_choice";
+      return needsReview(job);
     case "finished":
       return job.status === "completed";
     case "failed":
@@ -49,11 +54,13 @@ export interface StatusInfo {
 }
 
 export function stageNames(job: ExtractionJobRecord): string[] {
-  return isVideo(job) ? ["Fetch", "Download", "Save"] : ["Fetch", "Download", "Match", "Tag"];
+  const trim = job.request.trim ? ["Trim"] : [];
+  return isVideo(job) ? ["Fetch", "Download", ...trim, "Save"] : ["Fetch", "Download", ...trim, "Match", "Tag"];
 }
 
 export function statusInfo(job: ExtractionJobRecord): StatusInfo {
-  const video = isVideo(job);
+  const names = stageNames(job);
+  const stage = (name: string): number => names.indexOf(name);
   switch (job.status) {
     case "queued":
       return { label: "Waiting", tone: "neutral", stage: 0 };
@@ -61,10 +68,14 @@ export function statusInfo(job: ExtractionJobRecord): StatusInfo {
       return { label: "Fetching details", tone: "active", stage: 0 };
     case "downloading":
       return { label: "Downloading", tone: "active", stage: 1 };
+    case "awaiting_trim":
+      return { label: "Ready to trim", tone: "attention", stage: -1 };
+    case "trimming":
+      return { label: "Cutting clip", tone: "active", stage: stage("Trim") };
     case "resolving_metadata":
-      return { label: "Finding tags", tone: "active", stage: 2 };
+      return { label: "Finding tags", tone: "active", stage: stage("Match") };
     case "tagging":
-      return { label: "Saving", tone: "active", stage: video ? 2 : 3 };
+      return { label: "Saving", tone: "active", stage: names.length - 1 };
     case "awaiting_user_choice":
       return { label: "Needs review", tone: "attention", stage: -1 };
     case "completed":
@@ -130,6 +141,27 @@ export function formatDuration(seconds: number | undefined): string {
   return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
 }
 
+/** A position in a clip with tenths, e.g. "1:04.3" or "1:02:09.0". */
+export function formatClock(seconds: number): string {
+  const safe = Math.max(0, Number.isFinite(seconds) ? seconds : 0);
+  const tenths = Math.round(safe * 10);
+  const whole = Math.floor(tenths / 10);
+  const h = Math.floor(whole / 3600);
+  const m = Math.floor((whole % 3600) / 60);
+  const s = whole % 60;
+  const sec = `${String(s).padStart(2, "0")}.${tenths % 10}`;
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${sec}` : `${m}:${sec}`;
+}
+
+/** Reads "1:04.3", "64.3" or "1:02:09" back into seconds; undefined when it isn't a time. */
+export function parseClock(text: string): number | undefined {
+  const parts = text.trim().split(":");
+  if (parts.length === 0 || parts.length > 3 || parts.some((part) => !/^\d+(\.\d*)?$/.test(part))) {
+    return undefined;
+  }
+  return parts.reduce((total, part) => total * 60 + Number(part), 0);
+}
+
 export function formatEta(seconds: number | undefined): string {
   if (seconds === undefined || !Number.isFinite(seconds)) {
     return "";
@@ -161,7 +193,7 @@ const CODEC_LABELS: Record<string, string> = { opus: "Opus", mp4a: "AAC", aac: "
 
 export function audioSummary(job: ExtractionJobRecord): string {
   const format = job.videoInfo?.selectedFormat;
-  const duration = formatDuration(job.videoInfo?.duration ?? job.probeInfo?.duration);
+  const duration = formatDuration(job.trimRange ? job.trimRange.end - job.trimRange.start : job.videoInfo?.duration ?? job.probeInfo?.duration);
   if (isVideo(job)) {
     return ["MP4", duration].filter(Boolean).join(", ");
   }
