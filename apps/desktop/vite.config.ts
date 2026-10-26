@@ -8,8 +8,9 @@ const CSP = [
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
-  // The trim editor plays downloads through the app's own media scheme (see electron/main.ts).
-  "media-src 'self' liner-media:",
+  // The trim editor plays downloads through the app's own media scheme (see electron/main.ts),
+  // and shows a muted YouTube stream as the picture when trimming audio-only downloads.
+  "media-src 'self' liner-media: https://*.googlevideo.com",
   "connect-src 'self'",
   "font-src 'self'",
   "object-src 'none'",

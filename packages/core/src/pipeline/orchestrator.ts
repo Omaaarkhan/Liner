@@ -27,7 +27,7 @@ import { resolveCandidates, resolveCandidatesFromVideo } from "../services/metad
 import { DEFAULT_SETTINGS, SettingsStore } from "../services/settings-store.js";
 import { applyTags } from "../services/tagging.js";
 import { runPreflight } from "../services/binaries.js";
-import { normalizeTrimRange, readWaveform, trimMedia } from "../services/trim.js";
+import { normalizeTrimRange, readPreviewUrl, readWaveform, trimMedia } from "../services/trim.js";
 import { analyzeVideo, downloadAudio, downloadVideoAsMp4, parseProgressLine } from "../services/youtube.js";
 import { ensureDir } from "../utils/fs.js";
 import { CommandExecutionError } from "../utils/process.js";
@@ -40,6 +40,7 @@ interface PendingChoiceContext {
 interface PendingTrimContext {
   tempDir: string;
   downloadedPath: string;
+  infoJsonPath?: string;
   waveform?: Promise<TrimSource>;
 }
 
@@ -517,7 +518,7 @@ export class DownloadOrchestrator extends EventEmitter {
 
       if (existing.request.trim) {
         // Register the pending trim before announcing it, so the editor can load the file at once.
-        this.pendingTrims.set(jobId, { tempDir, downloadedPath });
+        this.pendingTrims.set(jobId, { tempDir, downloadedPath, infoJsonPath });
         this.controllers.delete(jobId);
         await this.updateJob(jobId, { status: "awaiting_trim" });
         tempDir = undefined;
@@ -603,10 +604,15 @@ export class DownloadOrchestrator extends EventEmitter {
     if (!pending) {
       throw new Error("This download is not waiting to be trimmed.");
     }
-    pending.waveform ??= readWaveform(pending.downloadedPath).then(({ duration, peaks }) => ({
+    const audioOnly = this.jobs.get(jobId)?.request.qualityMode !== "video_mp4";
+    pending.waveform ??= Promise.all([
+      readWaveform(pending.downloadedPath),
+      audioOnly ? readPreviewUrl(pending.infoJsonPath) : undefined
+    ]).then(([{ duration, peaks }, previewUrl]) => ({
       mediaUrl: `liner-media://${jobId}/`,
       duration: duration || this.jobs.get(jobId)?.videoInfo?.duration || 0,
-      peaks
+      peaks,
+      previewUrl
     }));
     pending.waveform.catch(() => {
       // Let the next request try again.
