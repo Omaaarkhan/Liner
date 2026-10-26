@@ -3,7 +3,6 @@
 appId: io.github.omaaarkhan.ytripper
 productName: Liner
 artifactName: "${productName}-${version}-${os}-${arch}.${ext}"
-electronVersion: 44.5.1
 directories:
   output: release
 files:
