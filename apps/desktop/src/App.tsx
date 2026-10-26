@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type JSX } from "react";
-import type { ExtractionJobRecord, MetadataCandidate, QualityMode } from "@audio-ripper/shared";
+import type { ExtractionJobRecord, MetadataCandidate, QualityMode, TrimRange } from "@audio-ripper/shared";
 import { Inspector } from "./components/Inspector";
 import { JobList } from "./components/JobList";
 import { SettingsSheet } from "./components/SettingsSheet";
 import { Sidebar } from "./components/Sidebar";
 import { Toolbar } from "./components/Toolbar";
-import { inView, looksLikeUrl, type ViewId } from "./lib/jobs";
+import { inView, looksLikeUrl, needsReview, type ViewId } from "./lib/jobs";
 import { useRipper } from "./lib/useRipper";
 
 const bridge = window.audioRipper;
@@ -25,6 +25,7 @@ export function App(): JSX.Element {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [url, setUrl] = useState("");
   const [format, setFormat] = useState<QualityMode>("source_fidelity");
+  const [trim, setTrim] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
   const urlInput = useRef<HTMLInputElement>(null);
@@ -46,7 +47,7 @@ export function App(): JSX.Element {
   const selected = useMemo(
     () =>
       visible.find((job) => job.jobId === selectedId) ??
-      visible.find((job) => job.status === "awaiting_user_choice") ??
+      visible.find(needsReview) ??
       visible[0] ??
       null,
     [visible, selectedId]
@@ -60,20 +61,20 @@ export function App(): JSX.Element {
   }, [jobs, view]);
 
   const submit = useCallback(
-    async (link: string, mode: QualityMode = format) => {
+    async (link: string, mode: QualityMode = format, trimClip: boolean = trim) => {
       const trimmed = link.trim();
       if (!looksLikeUrl(trimmed)) {
         showToast("That doesn't look like a link. Copy the address from YouTube and paste it here.");
         return;
       }
-      const job = await startDownload(trimmed, mode);
+      const job = await startDownload(trimmed, mode, trimClip);
       if (job) {
         setUrl("");
         setView((current) => (current === "all" || current === "active" ? current : "all"));
         setSelectedId(job.jobId);
       }
     },
-    [format, showToast, startDownload]
+    [format, trim, showToast, startDownload]
   );
 
   const changeFormat = useCallback(
@@ -146,6 +147,22 @@ export function App(): JSX.Element {
     [showToast]
   );
 
+  const loadTrimSource = useCallback((jobId: string) => bridge!.trimSource(jobId), []);
+
+  const applyTrim = useCallback(
+    async (job: ExtractionJobRecord, range: TrimRange | undefined) => {
+      if (!bridge) {
+        return;
+      }
+      try {
+        await bridge.applyTrim({ jobId: job.jobId, range });
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : "The clip could not be saved.");
+      }
+    },
+    [showToast]
+  );
+
   const reveal = useCallback(
     async (job: ExtractionJobRecord) => {
       if (!bridge || !job.outputPath) {
@@ -200,6 +217,8 @@ export function App(): JSX.Element {
             onUrlChange={setUrl}
             format={format}
             onFormatChange={changeFormat}
+            trim={trim}
+            onTrimChange={setTrim}
             onSubmit={() => void submit(url)}
             pasteShortcut={isMac ? "⌘V" : "Ctrl+V"}
           />
@@ -219,8 +238,10 @@ export function App(): JSX.Element {
             threshold={settings?.metadataAutoSelectThreshold ?? 0.86}
             revealLabel={REVEAL_LABEL}
             onApplyMetadata={applyMetadata}
+            loadTrimSource={loadTrimSource}
+            onApplyTrim={applyTrim}
             onCancel={(job) => void bridge.cancelJob(job.jobId)}
-            onRetry={(job) => void submit(job.request.url, job.request.qualityMode)}
+            onRetry={(job) => void submit(job.request.url, job.request.qualityMode, Boolean(job.request.trim))}
             onRemove={ripper.removeJob}
             onReveal={(job) => void reveal(job)}
             onMessage={showToast}

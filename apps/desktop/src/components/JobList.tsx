@@ -1,6 +1,6 @@
 import { memo, type KeyboardEvent } from "react";
 import type { ExtractionJobRecord } from "@audio-ripper/shared";
-import { audioSummary, displaySubtitle, displayTitle, isVideo, progressLine, stageNames, statusInfo, VIEWS, type ViewId } from "../lib/jobs";
+import { audioSummary, displaySubtitle, displayTitle, formatDuration, isVideo, needsReview, progressLine, stageNames, statusInfo, VIEWS, type ViewId } from "../lib/jobs";
 import { MusicIcon, VideoIcon } from "./Icons";
 
 interface JobListProps {
@@ -75,11 +75,16 @@ const JobRow = memo(function JobRow({
       </div>
       <div className="job-state">
         {running ? <StageBar job={job} /> : <span className={`pill tone-${status.tone}`}>{status.label}</span>}
-        <span className="job-detail" title={detail}>{running ? detail : job.status === "awaiting_user_choice" ? bestMatchLabel(job) : detail}</span>
+        <span className="job-detail" title={detail}>{running ? detail : job.status === "awaiting_user_choice" ? bestMatchLabel(job) : job.status === "awaiting_trim" ? trimLabel(job) : detail}</span>
       </div>
     </div>
   );
 });
+
+function trimLabel(job: ExtractionJobRecord): string {
+  const length = formatDuration(job.videoInfo?.duration);
+  return length ? `Pick the part to keep from ${length}` : "Pick the part to keep";
+}
 
 function bestMatchLabel(job: ExtractionJobRecord): string {
   const best = job.metadataCandidates?.[0];
@@ -89,7 +94,7 @@ function bestMatchLabel(job: ExtractionJobRecord): string {
 const EMPTY_COPY: Record<ViewId, { title: string; body: string }> = {
   all: { title: "Nothing downloaded yet", body: "Copy a YouTube link, then paste it anywhere in this window." },
   active: { title: "Nothing is downloading", body: "New downloads show their progress here." },
-  review: { title: "Nothing needs review", body: "When a match is below your threshold, it waits here for you to confirm." },
+  review: { title: "Nothing needs review", body: "Downloads you asked to trim, and matches below your threshold, wait here for you." },
   finished: { title: "No finished downloads", body: "Saved files appear here with a link to their folder." },
   failed: { title: "No failed downloads", body: "Downloads that fail or are cancelled show up here." }
 };
@@ -97,7 +102,7 @@ const EMPTY_COPY: Record<ViewId, { title: string; body: string }> = {
 export function JobList({ view, jobs, selectedId, onSelect, onRemove, onClearFinished, pasteShortcut }: JobListProps) {
   const title = VIEWS.find((item) => item.id === view)?.label ?? "Downloads";
   const running = jobs.filter((job) => statusInfo(job).stage >= 0).length;
-  const waiting = jobs.filter((job) => job.status === "awaiting_user_choice").length;
+  const waiting = jobs.filter(needsReview).length;
   const summary = [running ? `${running} running` : "", waiting ? `${waiting} waiting for you` : ""].filter(Boolean).join(", ");
   const canClear = (view === "finished" || view === "failed" || view === "all") && jobs.some((job) => ["completed", "failed", "cancelled"].includes(job.status));
 

@@ -4,6 +4,7 @@ import { mkdtemp, rename, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type {
+  ApplyTrimInput,
   ChooseMetadataInput,
   CreateJobInput,
   ExtractionJobRecord,
@@ -17,6 +18,7 @@ import type {
   Settings,
   ProbeAudioInfo,
   TrackMetadata,
+  TrimSource,
   YouTubeVideoInfo
 } from "@audio-ripper/shared";
 import { HistoryStore } from "../services/history-store.js";
@@ -25,6 +27,7 @@ import { resolveCandidates, resolveCandidatesFromVideo } from "../services/metad
 import { DEFAULT_SETTINGS, SettingsStore } from "../services/settings-store.js";
 import { applyTags } from "../services/tagging.js";
 import { runPreflight } from "../services/binaries.js";
+import { normalizeTrimRange, readWaveform, trimMedia } from "../services/trim.js";
 import { analyzeVideo, downloadAudio, downloadVideoAsMp4, parseProgressLine } from "../services/youtube.js";
 import { ensureDir } from "../utils/fs.js";
 import { CommandExecutionError } from "../utils/process.js";
@@ -32,6 +35,12 @@ import { CommandExecutionError } from "../utils/process.js";
 interface PendingChoiceContext {
   tempDir: string;
   downloadedAudioPath: string;
+}
+
+interface PendingTrimContext {
+  tempDir: string;
+  downloadedPath: string;
+  waveform?: Promise<TrimSource>;
 }
 
 const LOG_FLUSH_MS = 200;
@@ -77,6 +86,7 @@ export interface DownloadOrchestratorOptions {
 export class DownloadOrchestrator extends EventEmitter {
   private readonly jobs = new Map<string, ExtractionJobRecord>();
   private readonly pendingChoices = new Map<string, PendingChoiceContext>();
+  private readonly pendingTrims = new Map<string, PendingTrimContext>();
   private readonly controllers = new Map<string, AbortController>();
   private readonly settingsStore: SettingsStore;
   private readonly historyStore: HistoryStore;
@@ -103,6 +113,11 @@ export class DownloadOrchestrator extends EventEmitter {
     this.settings = await this.settingsStore.load();
     const history = await this.historyStore.list();
     for (const item of history) {
+      // The downloaded file waiting to be trimmed is only known to the session that made it.
+      if (item.status === "awaiting_trim" || item.status === "trimming") {
+        item.status = "cancelled";
+        item.error = "Liner closed before the clip was trimmed.";
+      }
       this.jobs.set(item.jobId, item);
     }
     this.initialized = true;
@@ -342,6 +357,8 @@ export class DownloadOrchestrator extends EventEmitter {
       "queued",
       "analyzing",
       "downloading",
+      "awaiting_trim",
+      "trimming",
       "resolving_metadata",
       "awaiting_user_choice",
       "tagging"
@@ -365,6 +382,12 @@ export class DownloadOrchestrator extends EventEmitter {
       }
     }
 
+    const pendingTrim = this.pendingTrims.get(jobId);
+    if (pendingTrim) {
+      this.pendingTrims.delete(jobId);
+      await rm(pendingTrim.tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+
     return this.updateJob(jobId, { status: "cancelled" });
   }
 
@@ -374,7 +397,7 @@ export class DownloadOrchestrator extends EventEmitter {
       return false;
     }
 
-    if (this.controllers.has(jobId) || this.pendingChoices.has(jobId)) {
+    if (this.controllers.has(jobId) || this.pendingChoices.has(jobId) || this.pendingTrims.has(jobId)) {
       await this.cancelJob(jobId);
     }
 
@@ -407,10 +430,11 @@ export class DownloadOrchestrator extends EventEmitter {
     }
     this.controllers.clear();
 
-    for (const pending of this.pendingChoices.values()) {
+    for (const pending of [...this.pendingChoices.values(), ...this.pendingTrims.values()]) {
       await rm(pending.tempDir, { recursive: true, force: true }).catch(() => undefined);
     }
     this.pendingChoices.clear();
+    this.pendingTrims.clear();
 
     this.jobs.clear();
     await this.historyStore.clear();
@@ -469,85 +493,186 @@ export class DownloadOrchestrator extends EventEmitter {
         videoInfo
       });
 
-      if (existing.request.qualityMode === "video_mp4") {
-        const downloadedVideoPath = await downloadVideoAsMp4({
-          url: existing.request.url,
-          infoJsonPath,
-          tempDir,
-          expectedVideoId: videoInfo.id,
-          downloadSpeedProfile: existing.request.downloadSpeedProfile || "balanced",
-          signal: controller.signal,
-          onLog: (line) => this.appendLog(jobId, line)
-        });
+      const video = existing.request.qualityMode === "video_mp4";
+      const downloadedPath = video
+        ? await downloadVideoAsMp4({
+            url: existing.request.url,
+            infoJsonPath,
+            tempDir,
+            expectedVideoId: videoInfo.id,
+            downloadSpeedProfile: existing.request.downloadSpeedProfile || "balanced",
+            signal: controller.signal,
+            onLog: (line) => this.appendLog(jobId, line)
+          })
+        : await downloadAudio({
+            url: existing.request.url,
+            infoJsonPath,
+            formatId: videoInfo.selectedFormat.formatId,
+            downloadSpeedProfile: existing.request.downloadSpeedProfile || "balanced",
+            tempDir,
+            expectedVideoId: videoInfo.id,
+            signal: controller.signal,
+            onLog: (line) => this.appendLog(jobId, line)
+          });
 
-        const finalOutputPath = await moveVideoIntoLibrary({
-          stagedFilePath: downloadedVideoPath,
-          outputRoot: existing.request.outputRoot,
-          title: videoInfo.title
-        });
-
+      if (existing.request.trim) {
+        // Register the pending trim before announcing it, so the editor can load the file at once.
+        this.pendingTrims.set(jobId, { tempDir, downloadedPath });
         this.controllers.delete(jobId);
-        await this.updateJob(jobId, {
-          status: "completed",
-          outputPath: finalOutputPath,
-          warnings: existing.warnings
-        });
-
-        return;
-      }
-
-      const downloadedAudioPath = await downloadAudio({
-        url: existing.request.url,
-        infoJsonPath,
-        formatId: videoInfo.selectedFormat.formatId,
-        downloadSpeedProfile: existing.request.downloadSpeedProfile || "balanced",
-        tempDir,
-        expectedVideoId: videoInfo.id,
-        signal: controller.signal,
-        onLog: (line) => this.appendLog(jobId, line)
-      });
-
-      const probeInfo = probeInfoFromFormat(videoInfo);
-
-      await this.updateJob(jobId, {
-        status: "resolving_metadata",
-        probeInfo
-      });
-
-      const metadataResolution = await resolveCandidatesFromVideo(videoInfo);
-      // Compare the top candidate with the user's own threshold, not the resolver's default.
-      const bestCandidate = metadataResolution.candidates[0];
-
-      await this.updateJob(jobId, {
-        metadataCandidates: metadataResolution.candidates
-      });
-
-      if (!bestCandidate || bestCandidate.score < this.settings.metadataAutoSelectThreshold) {
-        // Register the pending choice before announcing it, so an immediate answer finds it.
-        this.pendingChoices.set(jobId, {
-          tempDir,
-          downloadedAudioPath
-        });
-        await this.updateJob(jobId, {
-          status: "awaiting_user_choice"
-        });
-        this.controllers.delete(jobId);
+        await this.updateJob(jobId, { status: "awaiting_trim" });
         tempDir = undefined;
         return;
       }
 
-      await this.updateJob(jobId, {
-        status: "tagging",
-        selectedMetadata: bestCandidate.metadata
-      });
-
-      await this.finalizeJob(jobId, tempDir, downloadedAudioPath, bestCandidate);
+      await this.continueAfterDownload(jobId, tempDir, downloadedPath);
       tempDir = undefined;
     } finally {
       if (tempDir) {
         await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
       }
     }
+  }
+
+  /** Everything after the file is downloaded (and trimmed, if asked): tags for audio, then the library. */
+  private async continueAfterDownload(jobId: string, tempDir: string, downloadedPath: string): Promise<void> {
+    const existing = this.jobs.get(jobId);
+    if (!existing?.videoInfo) {
+      throw new Error("Job disappeared from queue.");
+    }
+    const videoInfo = existing.videoInfo;
+
+    if (existing.request.qualityMode === "video_mp4") {
+      const finalOutputPath = await moveVideoIntoLibrary({
+        stagedFilePath: downloadedPath,
+        outputRoot: existing.request.outputRoot,
+        title: videoInfo.title
+      });
+      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+
+      this.controllers.delete(jobId);
+      await this.updateJob(jobId, {
+        status: "completed",
+        outputPath: finalOutputPath,
+        warnings: existing.warnings
+      });
+      return;
+    }
+
+    const probeInfo = probeInfoFromFormat(videoInfo);
+    if (existing.trimRange) {
+      probeInfo.duration = existing.trimRange.end - existing.trimRange.start;
+    }
+
+    await this.updateJob(jobId, {
+      status: "resolving_metadata",
+      probeInfo
+    });
+
+    const metadataResolution = await resolveCandidatesFromVideo(videoInfo);
+    // Compare the top candidate with the user's own threshold, not the resolver's default.
+    const bestCandidate = metadataResolution.candidates[0];
+
+    await this.updateJob(jobId, {
+      metadataCandidates: metadataResolution.candidates
+    });
+
+    if (!bestCandidate || bestCandidate.score < this.settings.metadataAutoSelectThreshold) {
+      // Register the pending choice before announcing it, so an immediate answer finds it.
+      this.pendingChoices.set(jobId, {
+        tempDir,
+        downloadedAudioPath: downloadedPath
+      });
+      await this.updateJob(jobId, {
+        status: "awaiting_user_choice"
+      });
+      this.controllers.delete(jobId);
+      return;
+    }
+
+    await this.updateJob(jobId, {
+      status: "tagging",
+      selectedMetadata: bestCandidate.metadata
+    });
+
+    await this.finalizeJob(jobId, tempDir, downloadedPath, bestCandidate);
+  }
+
+  /** The waveform and playable address of a download waiting to be trimmed. */
+  async getTrimSource(jobId: string): Promise<TrimSource> {
+    const pending = this.pendingTrims.get(jobId);
+    if (!pending) {
+      throw new Error("This download is not waiting to be trimmed.");
+    }
+    pending.waveform ??= readWaveform(pending.downloadedPath).then(({ duration, peaks }) => ({
+      mediaUrl: `liner-media://${jobId}/`,
+      duration: duration || this.jobs.get(jobId)?.videoInfo?.duration || 0,
+      peaks
+    }));
+    pending.waveform.catch(() => {
+      // Let the next request try again.
+      if (this.pendingTrims.get(jobId) === pending) {
+        pending.waveform = undefined;
+      }
+    });
+    return pending.waveform;
+  }
+
+  /** The file on disk behind a pending trim, for the media protocol. */
+  getTrimFilePath(jobId: string): string | undefined {
+    return this.pendingTrims.get(jobId)?.downloadedPath;
+  }
+
+  /** Cuts a download waiting to be trimmed (or keeps it whole) and finishes the job. */
+  async applyTrim(input: ApplyTrimInput): Promise<ExtractionJobRecord> {
+    const pending = this.pendingTrims.get(input.jobId);
+    const job = this.jobs.get(input.jobId);
+    if (!pending || !job) {
+      throw new Error("This download is not waiting to be trimmed.");
+    }
+    const range = input.range ? normalizeTrimRange(input.range, job.videoInfo?.duration) : undefined;
+    this.pendingTrims.delete(input.jobId);
+
+    const controller = new AbortController();
+    this.controllers.set(input.jobId, controller);
+    const updated = await this.updateJob(input.jobId, {
+      status: range ? "trimming" : job.status,
+      trimRange: range
+    });
+
+    void (async () => {
+      let tempDir: string | undefined = pending.tempDir;
+      try {
+        let mediaPath = pending.downloadedPath;
+        if (range) {
+          this.appendLog(input.jobId, `Trimming to ${range.start.toFixed(1)} s – ${range.end.toFixed(1)} s`);
+          mediaPath = await trimMedia({
+            inputPath: pending.downloadedPath,
+            outputDir: pending.tempDir,
+            range,
+            video: job.request.qualityMode === "video_mp4",
+            signal: controller.signal,
+            onLog: (line) => this.appendLog(input.jobId, line)
+          });
+          await rm(pending.downloadedPath, { force: true }).catch(() => undefined);
+        }
+        await this.continueAfterDownload(input.jobId, pending.tempDir, mediaPath);
+        tempDir = undefined;
+      } catch (error: unknown) {
+        if (!this.jobs.has(input.jobId) || this.jobs.get(input.jobId)?.status === "cancelled") {
+          return;
+        }
+        const message = errorMessage(error);
+        this.appendLog(input.jobId, `ERROR: ${message}`);
+        this.controllers.delete(input.jobId);
+        await this.updateJob(input.jobId, { status: "failed", error: message }).catch(() => undefined);
+      } finally {
+        if (tempDir) {
+          await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+        }
+      }
+    })();
+
+    return updated;
   }
 
   private async finalizeJob(

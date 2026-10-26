@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { existsSync } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
+import { Readable } from "node:stream";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import {
   app,
@@ -10,6 +11,7 @@ import {
   ipcMain,
   Menu,
   nativeTheme,
+  protocol,
   type BrowserWindowConstructorOptions,
   type MenuItemConstructorOptions,
   type WebContents
@@ -23,6 +25,7 @@ import {
   ytDlpAssetName
 } from "@audio-ripper/core";
 import type {
+  ApplyTrimInput,
   ChooseMetadataInput,
   CreateJobInput,
   JobEvent,
@@ -68,6 +71,13 @@ function configureBundledBinaries(): void {
 
 configureBundledBinaries();
 
+// The trim editor plays downloads that are still in the temp folder through this scheme.
+// It must be registered before the app is ready; stream support lets media elements seek.
+const MEDIA_SCHEME = "liner-media";
+protocol.registerSchemesAsPrivileged([
+  { scheme: MEDIA_SCHEME, privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } }
+]);
+
 const toolsDir = path.join(app.getPath("userData"), "tools", "yt-dlp");
 let mainWindow: BrowserWindow | null = null;
 const subscriptions = new Map<number, (event: JobEvent) => void>();
@@ -105,6 +115,58 @@ async function revealItem(targetPath: string): Promise<RevealResult> {
       return { ok: false, message: "The file and its folder no longer exist." };
     }
   }
+}
+
+// ---------- Trim preview media ----------
+
+const MEDIA_TYPES: Record<string, string> = {
+  ".mp4": "video/mp4",
+  ".webm": "audio/webm",
+  ".m4a": "audio/mp4",
+  ".mp3": "audio/mpeg",
+  ".opus": "audio/ogg",
+  ".ogg": "audio/ogg"
+};
+
+/**
+ * Serves liner-media://<jobId>/ from the file waiting to be trimmed. Only job ids
+ * with a pending trim resolve, so the window can't read arbitrary paths. Range
+ * requests are answered by hand because media elements need them to seek.
+ */
+async function serveTrimMedia(request: Request): Promise<Response> {
+  const jobId = new URL(request.url).hostname;
+  const filePath = orchestrator.getTrimFilePath(jobId);
+  if (!filePath) {
+    return new Response("Not found", { status: 404 });
+  }
+
+  const { size } = await stat(filePath);
+  const type = MEDIA_TYPES[path.extname(filePath).toLowerCase()] ?? "application/octet-stream";
+  const range = /^bytes=(\d*)-(\d*)$/.exec(request.headers.get("range") ?? "");
+  let start = 0;
+  let end = size - 1;
+  if (range) {
+    if (range[1]) {
+      start = Number(range[1]);
+      end = range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+    } else if (range[2]) {
+      start = Math.max(0, size - Number(range[2]));
+    }
+    if (start > end || start >= size) {
+      return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${size}` } });
+    }
+  }
+
+  const body = Readable.toWeb(createReadStream(filePath, { start, end })) as ReadableStream<Uint8Array>;
+  return new Response(body, {
+    status: range ? 206 : 200,
+    headers: {
+      "Content-Type": type,
+      "Content-Length": String(end - start + 1),
+      "Accept-Ranges": "bytes",
+      ...(range ? { "Content-Range": `bytes ${start}-${end}/${size}` } : {})
+    }
+  });
 }
 
 // ---------- yt-dlp updates ----------
@@ -334,6 +396,8 @@ function bindIpc(): void {
     await orchestrator.deleteJob(jobId);
     return orchestrator.listJobs();
   });
+  ipcMain.handle("job:trimSource", async (_event, jobId: string) => orchestrator.getTrimSource(jobId));
+  ipcMain.handle("job:applyTrim", async (_event, payload: ApplyTrimInput) => orchestrator.applyTrim(payload));
   ipcMain.handle("job:clearFinished", async () => {
     await orchestrator.clearFinished();
     return orchestrator.listJobs();
@@ -429,6 +493,7 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(async () => {
     await orchestrator.initialize();
     applyTheme(orchestrator.getSettings().theme);
+    protocol.handle(MEDIA_SCHEME, (request) => serveTrimMedia(request));
     bindIpc();
     buildMenu();
     await createMainWindow();

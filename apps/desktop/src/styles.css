@@ -206,6 +206,23 @@ h1, h2, h3, p { margin: 0; }
 .segmented button:hover { color: var(--text); }
 .segmented button.is-on { background: var(--field); color: var(--text); font-weight: 600; box-shadow: var(--shadow); }
 
+.toggle {
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--fill);
+  color: var(--text-2);
+  white-space: nowrap;
+  flex: none;
+}
+.toggle svg { width: 14px; height: 14px; }
+.toggle:hover { color: var(--text); }
+.toggle.is-on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+
 .button {
   height: 28px;
   padding: 0 13px;
@@ -394,6 +411,61 @@ a.source-link:hover { color: var(--accent); text-decoration: underline; }
 .art-option[aria-checked="true"] { color: var(--text); font-weight: 600; }
 
 .destination { font-size: 11.5px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- Trim ---------- */
+
+.trim { display: grid; gap: 12px; }
+.trim-preview { aspect-ratio: 16 / 9; border-radius: var(--radius); overflow: hidden; background: #000; }
+.trim-preview video, .trim-preview img { width: 100%; height: 100%; object-fit: contain; }
+.trim-intro { display: grid; gap: 2px; }
+.trim-intro h3 { font-size: 13px; font-weight: 600; }
+.trim-intro p { font-size: 12px; }
+
+/* The handles sit outside the kept part, so the track leaves room for them at both ends. */
+.trim-track { position: relative; height: 72px; margin: 2px 12px; border-radius: 4px; background: var(--fill); touch-action: none; }
+.trim-track.is-loading { display: grid; place-items: center; font-size: 12px; margin: 2px 0; border-radius: var(--radius); }
+.trim-wave { position: absolute; left: 0; top: 8px; width: 100%; height: calc(100% - 16px); pointer-events: none; }
+.wave-out { fill: var(--text-3); opacity: 0.5; }
+.wave-in { fill: var(--accent); }
+.trim-shade { position: absolute; top: 0; bottom: 0; background: color-mix(in srgb, var(--inspector) 45%, transparent); pointer-events: none; }
+.trim-selection { position: absolute; top: -2px; bottom: -2px; border-block: 2px solid var(--accent); cursor: grab; }
+.trim-selection:active { cursor: grabbing; }
+.trim-handle { position: absolute; top: -2px; bottom: -2px; width: 12px; background: var(--accent); cursor: ew-resize; outline: none; }
+.trim-handle.is-start { left: -12px; border-radius: 5px 0 0 5px; }
+.trim-handle.is-end { right: -12px; border-radius: 0 5px 5px 0; }
+.trim-handle::after { content: ""; position: absolute; left: 5px; top: 50%; width: 2px; height: 16px; margin-top: -8px; border-radius: 1px; background: var(--on-accent); opacity: 0.85; }
+.trim-handle:focus-visible { box-shadow: 0 0 0 3px var(--accent-soft); }
+.trim-playhead { position: absolute; top: -5px; bottom: -5px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--text); pointer-events: none; }
+
+.trim-controls { display: flex; align-items: center; gap: 10px; }
+.play-button { width: 30px; height: 30px; flex: none; display: grid; place-items: center; border: 0; border-radius: 50%; background: var(--fill-strong); }
+.play-button:hover { background: var(--accent-soft); color: var(--accent); }
+.play-button svg { width: 13px; height: 13px; }
+.trim-clock { font-weight: 600; font-variant-numeric: tabular-nums; }
+.trim-shortcuts { margin-left: auto; display: flex; gap: 14px; }
+
+.trim-times { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 10px; align-items: end; }
+.time-field, .trim-length { display: grid; gap: 4px; }
+.time-field span, .trim-length span { font-size: 11px; font-weight: 600; color: var(--text-2); }
+.time-field input {
+  width: 100%;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid var(--field-line);
+  background: var(--field);
+  font-variant-numeric: tabular-nums;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.time-field input:focus { outline: 0; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.time-field:last-child { text-align: right; }
+.time-field:last-child input { text-align: right; }
+.trim-length { justify-items: center; }
+/* Cancel sits apart on the left so the two ways to save stay together. */
+.trim .actions { flex-wrap: nowrap; gap: 6px; }
+.trim .actions .button.ghost { padding: 0 8px; margin-right: auto; }
+.trim-length output { line-height: 26px; color: var(--text-2); font-variant-numeric: tabular-nums; }
 
 /* ---------- Settings sheet ---------- */
 

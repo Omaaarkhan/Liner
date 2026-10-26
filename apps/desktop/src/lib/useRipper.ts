@@ -80,7 +80,7 @@ export function useRipper(bridge: RipperBridge | undefined) {
   const visibleJobs = useMemo(() => jobs.filter((job) => !hidden.has(job.jobId)), [jobs, hidden]);
 
   const startDownload = useCallback(
-    async (url: string, qualityMode: QualityMode): Promise<ExtractionJobRecord | undefined> => {
+    async (url: string, qualityMode: QualityMode, trim = false): Promise<ExtractionJobRecord | undefined> => {
       if (!bridge || !settings) {
         return undefined;
       }
@@ -90,7 +90,8 @@ export function useRipper(bridge: RipperBridge | undefined) {
           outputRoot: settings.outputRoot,
           qualityMode,
           embedArtwork: settings.embedArtwork,
-          downloadSpeedProfile: settings.downloadSpeedProfile
+          downloadSpeedProfile: settings.downloadSpeedProfile,
+          trim
         });
         setJobs((current) => upsert(current, job));
         return job;

@@ -1,13 +1,15 @@
 import { forwardRef } from "react";
 import type { QualityMode } from "@audio-ripper/shared";
 import { FORMAT_DESCRIPTIONS, FORMAT_LABELS } from "../lib/jobs";
-import { LinkIcon } from "./Icons";
+import { LinkIcon, ScissorsIcon } from "./Icons";
 
 interface ToolbarProps {
   url: string;
   onUrlChange: (url: string) => void;
   format: QualityMode;
   onFormatChange: (format: QualityMode) => void;
+  trim: boolean;
+  onTrimChange: (trim: boolean) => void;
   onSubmit: () => void;
   pasteShortcut: string;
 }
@@ -15,7 +17,7 @@ interface ToolbarProps {
 const FORMATS: QualityMode[] = ["source_fidelity", "mp3_320_export", "video_mp4"];
 
 export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(function Toolbar(
-  { url, onUrlChange, format, onFormatChange, onSubmit, pasteShortcut },
+  { url, onUrlChange, format, onFormatChange, trim, onTrimChange, onSubmit, pasteShortcut },
   inputRef
 ) {
   return (
@@ -57,6 +59,17 @@ export const Toolbar = forwardRef<HTMLInputElement, ToolbarProps>(function Toolb
           </button>
         ))}
       </div>
+
+      <button
+        type="button"
+        className={`toggle${trim ? " is-on" : ""}`}
+        aria-pressed={trim}
+        title={trim ? "Downloads wait for you to pick the part to keep" : "Pick the part to keep before saving"}
+        onClick={() => onTrimChange(!trim)}
+      >
+        <ScissorsIcon />
+        Trim
+      </button>
 
       <button type="submit" className="button primary" disabled={!url.trim()}>
         Download

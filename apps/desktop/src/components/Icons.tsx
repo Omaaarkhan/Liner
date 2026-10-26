@@ -28,3 +28,12 @@ export const VideoIcon = (p: IconProps) => <Base {...p}><rect x="2" y="3.5" widt
 export const CopyIcon = (p: IconProps) => <Base {...p}><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" /><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2" /></Base>;
 export const ChevronIcon = (p: IconProps) => <Base {...p}><path d="m6 4 4 4-4 4" /></Base>;
 export const ImageIcon = (p: IconProps) => <Base {...p}><rect x="2.5" y="2.5" width="11" height="11" rx="1.5" /><circle cx="6" cy="6" r="1.2" /><path d="m3 12 3.5-3.5 2.5 2.5 1.5-1.5 2.5 2.5" /></Base>;
+export const ScissorsIcon = (p: IconProps) => (
+  <Base {...p}>
+    <circle cx="4.5" cy="4.5" r="2" />
+    <circle cx="4.5" cy="11.5" r="2" />
+    <path d="M6.2 5.6 13.5 12M6.2 10.4 13.5 4" />
+  </Base>
+);
+export const PlayIcon = (p: IconProps) => <Base {...p}><path d="M5 3.5v9l7.5-4.5z" fill="currentColor" /></Base>;
+export const PauseIcon = (p: IconProps) => <Base {...p}><path d="M5.5 3.5v9M10.5 3.5v9" strokeWidth={2.2} /></Base>;
