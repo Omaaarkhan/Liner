@@ -8,6 +8,8 @@ export type JobStatus =
   | "queued"
   | "analyzing"
   | "downloading"
+  | "awaiting_trim"
+  | "trimming"
   | "resolving_metadata"
   | "awaiting_user_choice"
   | "tagging"
@@ -21,6 +23,14 @@ export interface ExtractionRequest {
   qualityMode: QualityMode;
   embedArtwork: boolean;
   downloadSpeedProfile?: DownloadSpeedProfile;
+  /** Pause after the download so the user can pick the part to keep. */
+  trim?: boolean;
+}
+
+/** A span of the source media, in seconds. */
+export interface TrimRange {
+  start: number;
+  end: number;
 }
 
 export interface TrackMetadata {
@@ -116,6 +126,8 @@ export interface ExtractionResult {
   metadataCandidates?: MetadataCandidate[];
   error?: string;
   progress?: JobProgress;
+  /** The part of the source that was kept, when the job was trimmed. */
+  trimRange?: TrimRange;
   createdAt: string;
   updatedAt: string;
 }
@@ -150,6 +162,21 @@ export interface ResolveCandidatesOutput {
 export interface ChooseMetadataInput {
   jobId: string;
   candidate: MetadataCandidate;
+}
+
+export interface ApplyTrimInput {
+  jobId: string;
+  /** Leave out to keep the whole download. */
+  range?: TrimRange;
+}
+
+/** What the trim editor needs to draw and play a downloaded file. */
+export interface TrimSource {
+  /** Address the window can load in an audio or video element. */
+  mediaUrl: string;
+  duration: number;
+  /** Loudness per slice of the file, 0..1, evenly spaced over the duration. */
+  peaks: number[];
 }
 
 export interface CreateJobInput extends ExtractionRequest {}

@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
+  ApplyTrimInput,
   ChooseMetadataInput,
   CreateJobInput,
   JobEvent,
@@ -28,6 +29,8 @@ const api = {
   listJobs: () => ipcRenderer.invoke("job:list"),
   cancelJob: (jobId: string) => ipcRenderer.invoke("job:cancel", jobId),
   deleteJob: (jobId: string) => ipcRenderer.invoke("job:delete", jobId),
+  trimSource: (jobId: string) => ipcRenderer.invoke("job:trimSource", jobId),
+  applyTrim: (payload: ApplyTrimInput) => ipcRenderer.invoke("job:applyTrim", payload),
   clearFinished: () => ipcRenderer.invoke("job:clearFinished"),
   clearHistory: () => ipcRenderer.invoke("job:clearHistory"),
   resolveCandidates: (payload: ResolveCandidatesInput) => ipcRenderer.invoke("metadata:resolveCandidates", payload),

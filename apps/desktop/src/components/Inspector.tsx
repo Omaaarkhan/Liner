@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import type { ExtractionJobRecord, MetadataCandidate } from "@audio-ripper/shared";
+import type { ExtractionJobRecord, MetadataCandidate, TrimRange, TrimSource } from "@audio-ripper/shared";
 import {
   audioSummary,
   displaySubtitle,
   displayTitle,
   fileName,
+  formatClock,
   isCancelable,
   isVideo,
   progressLine,
@@ -14,12 +15,15 @@ import {
 import { ChevronIcon, CopyIcon } from "./Icons";
 import { Thumb } from "./JobList";
 import { ReviewForm } from "./ReviewForm";
+import { TrimEditor } from "./TrimEditor";
 
 interface InspectorProps {
   job: ExtractionJobRecord | null;
   threshold: number;
   revealLabel: string;
   onApplyMetadata: (job: ExtractionJobRecord, candidate: MetadataCandidate) => Promise<void>;
+  loadTrimSource: (jobId: string) => Promise<TrimSource>;
+  onApplyTrim: (job: ExtractionJobRecord, range: TrimRange | undefined) => Promise<void>;
   onCancel: (job: ExtractionJobRecord) => void;
   onRetry: (job: ExtractionJobRecord) => void;
   onRemove: (job: ExtractionJobRecord) => void;
@@ -113,6 +117,9 @@ function Details({ job }: { job: ExtractionJobRecord }) {
     if (meta.year) rows.push(["Year", String(meta.year)]);
     if (meta.genre) rows.push(["Genre", meta.genre]);
   }
+  if (job.trimRange) {
+    rows.push(["Clip", `${formatClock(job.trimRange.start)} to ${formatClock(job.trimRange.end)}`]);
+  }
   if (job.outputPath) {
     rows.push(["File", fileName(job.outputPath)]);
   }
@@ -130,7 +137,7 @@ function Details({ job }: { job: ExtractionJobRecord }) {
   );
 }
 
-export function Inspector({ job, threshold, revealLabel, onApplyMetadata, onCancel, onRetry, onRemove, onReveal, onMessage }: InspectorProps) {
+export function Inspector({ job, threshold, revealLabel, onApplyMetadata, loadTrimSource, onApplyTrim, onCancel, onRetry, onRemove, onReveal, onMessage }: InspectorProps) {
   const [editing, setEditing] = useState(false);
 
   useEffect(() => setEditing(false), [job?.jobId]);
@@ -146,6 +153,7 @@ export function Inspector({ job, threshold, revealLabel, onApplyMetadata, onCanc
   const status = statusInfo(job);
   const running = status.stage >= 0;
   const reviewing = job.status === "awaiting_user_choice" && !isVideo(job);
+  const trimming = job.status === "awaiting_trim";
   const canEditTags = job.status === "completed" && !isVideo(job) && Boolean(job.outputPath) && (job.metadataCandidates?.length ?? 0) > 0;
 
   return (
@@ -175,6 +183,16 @@ export function Inspector({ job, threshold, revealLabel, onApplyMetadata, onCanc
           </div>
         ) : null}
 
+        {trimming ? (
+          <TrimEditor
+            key={job.jobId}
+            job={job}
+            loadSource={loadTrimSource}
+            onApply={(range) => onApplyTrim(job, range)}
+            onCancel={() => onCancel(job)}
+          />
+        ) : null}
+
         {reviewing || editing ? (
           <ReviewForm
             key={`${job.jobId}-${editing ? "edit" : "review"}`}
@@ -190,7 +208,7 @@ export function Inspector({ job, threshold, revealLabel, onApplyMetadata, onCanc
           />
         ) : null}
 
-        {!running && !reviewing && !editing && job.status !== "failed" ? <Details job={job} /> : null}
+        {!running && !reviewing && !editing && !trimming && job.status !== "failed" ? <Details job={job} /> : null}
 
         {job.warnings.length > 0 && job.status === "completed" ? (
           <ul className="warnings">
@@ -203,7 +221,7 @@ export function Inspector({ job, threshold, revealLabel, onApplyMetadata, onCanc
         <LogDisclosure job={job} onMessage={onMessage} />
       </div>
 
-      {!reviewing && !editing ? (
+      {!reviewing && !editing && !trimming ? (
         <footer className="actions">
           {running && isCancelable(job) ? (
             <button type="button" className="button" onClick={() => onCancel(job)}>

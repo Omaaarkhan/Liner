@@ -47,7 +47,59 @@ const reviewCandidates: MetadataCandidate[] = [
   }
 ];
 
+const TRIM_SECONDS = 96;
+
+/** A made-up song shape: quiet intro, louder chorus swells, fade out. */
+function loudnessAt(t: number): number {
+  const intro = Math.min(1, t / 8);
+  const outro = Math.min(1, (TRIM_SECONDS - t) / 10);
+  const swell = 0.55 + 0.35 * Math.sin(t / 7) ** 2;
+  const beat = 0.75 + 0.25 * Math.abs(Math.sin(t * Math.PI * 2));
+  return Math.max(0, intro * outro * swell * beat);
+}
+
+/** A tone whose volume follows loudnessAt, so the mock waveform matches what plays. */
+function mockAudioUrl(): string {
+  const rate = 8000;
+  const samples = rate * TRIM_SECONDS;
+  const buffer = new ArrayBuffer(44 + samples * 2);
+  const view = new DataView(buffer);
+  const text = (offset: number, value: string) => [...value].forEach((char, i) => view.setUint8(offset + i, char.charCodeAt(0)));
+  text(0, "RIFF");
+  view.setUint32(4, 36 + samples * 2, true);
+  text(8, "WAVEfmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, rate, true);
+  view.setUint32(28, rate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  text(36, "data");
+  view.setUint32(40, samples * 2, true);
+  for (let i = 0; i < samples; i += 1) {
+    const t = i / rate;
+    const note = 220 * 2 ** (Math.floor(t / 2) % 5 / 12);
+    view.setInt16(44 + i * 2, Math.sin(2 * Math.PI * note * t) * loudnessAt(t) * 9000, true);
+  }
+  return URL.createObjectURL(new Blob([buffer], { type: "audio/wav" }));
+}
+
 let jobs: ExtractionJobRecord[] = [
+  baseJob("trim1", {
+    status: "awaiting_trim",
+    createdAt: iso(0.5),
+    request: { url: "https://www.youtube.com/watch?v=trim1", outputRoot: "/Users/you/Music/Liner", qualityMode: "mp3_320_export", embedArtwork: true, trim: true },
+    videoInfo: {
+      id: "trim1",
+      title: "Harbour Choir - Lantern Song (Live at the Old Pier)",
+      channel: "Harbour Choir",
+      webpageUrl: "https://www.youtube.com/watch?v=trim1",
+      thumbnail: art("#14532d", "#a3e635"),
+      duration: TRIM_SECONDS,
+      selectedFormat: { formatId: "251", ext: "webm", acodec: "opus", abr: 160, audioQualityScore: 160 }
+    }
+  }),
   baseJob("rev1", {
     status: "awaiting_user_choice",
     createdAt: iso(2),
@@ -177,6 +229,20 @@ export const mockBridge: RipperBridge = {
   deleteJob: async (jobId) => {
     jobs = jobs.filter((item) => item.jobId !== jobId);
     return clone(jobs);
+  },
+  trimSource: async () => {
+    await new Promise((resolve) => window.setTimeout(resolve, 600));
+    const peaks = Array.from({ length: 800 }, (_, i) => loudnessAt((i / 800) * TRIM_SECONDS) * (0.85 + 0.15 * Math.random()));
+    return { mediaUrl: mockAudioUrl(), duration: TRIM_SECONDS, peaks };
+  },
+  applyTrim: async ({ jobId, range }) => {
+    const job = jobs.find((item) => item.jobId === jobId)!;
+    job.status = "completed";
+    job.trimRange = range;
+    job.selectedMetadata = { title: "Lantern Song (Live)", artist: "Harbour Choir", album: "Unknown Album" };
+    job.outputPath = "/Users/you/Music/Liner/Harbour Choir/Unknown Album/Lantern Song (Live).mp3";
+    emit({ type: "job-status", job: clone(job) });
+    return clone(job);
   },
   clearFinished: async () => {
     jobs = jobs.filter((item) => !["completed", "failed", "cancelled"].includes(item.status));
