@@ -1,20 +1,80 @@
 name: Release
 
-# Push a tag like v0.2.0 to build installers and attach them to a draft GitHub release.
+# Builds the macOS (Apple Silicon and Intel) and Windows installers and attaches
+# them to a GitHub release.
+#
+# - Weekly (Tuesday 14:00 UTC, the day after Dependabot's Monday PRs merge):
+#   if main has commits since the latest v* tag, tag the next patch version
+#   and release it. If nothing changed, it does nothing.
+# - Run it by hand from the Actions tab: leave "tag" empty to release the next
+#   patch version now, or give an existing tag to rebuild its files.
+# - Pushing a v* tag yourself also releases that tag.
 on:
+  schedule:
+    - cron: "0 14 * * 2"
   push:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing release tag to rebuild and replace the files of, e.g. v0.2.1"
-        required: true
+        description: "Existing tag to rebuild, e.g. v0.2.3. Leave empty to release the next patch version from main."
+        required: false
+        default: ""
 
 permissions:
   contents: write
 
+env:
+  # true: publish the release as soon as it is built. false: leave it as a draft.
+  PUBLISH: "true"
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.pick.outputs.tag }}
+      version: ${{ steps.pick.outputs.version }}
+      skip: ${{ steps.pick.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: pick
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            tag="${GITHUB_REF_NAME}"
+          elif [ -n "${INPUT_TAG}" ]; then
+            tag="${INPUT_TAG}"
+            git rev-parse -q --verify "refs/tags/${tag}" >/dev/null || { echo "Tag ${tag} does not exist"; exit 1; }
+          else
+            last=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)
+            if [ -n "${last}" ] && [ -z "$(git rev-list "${last}..HEAD")" ]; then
+              echo "No new commits since ${last}; nothing to release."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            IFS=. read -r major minor patch <<< "${last#v}"
+            tag="v${major:-0}.${minor:-0}.$(( ${patch:-0} + 1 ))"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "${tag}" -m "Liner ${tag}"
+            git push origin "${tag}"
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "Releasing ${tag}"
+
   build:
+    needs: prepare
+    if: needs.prepare.outputs.skip != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -28,22 +88,43 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
       - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
       - run: npm ci
+      # The installers are named after this version, so stamp it from the tag.
+      - run: npm pkg set version=${{ needs.prepare.outputs.version }} -w apps/desktop
+        shell: bash
       # electron-builder only publishes when GH_TOKEN is set, so this just builds.
       - run: npm run ${{ matrix.script }}
         env:
           # No Developer ID yet: macOS builds get the ad-hoc signature set in
           # electron-builder.yml, and Windows builds stay unsigned.
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-      - uses: softprops/action-gh-release@v3
+      - uses: actions/upload-artifact@v5
         with:
-          draft: true
-          tag_name: ${{ inputs.tag || github.ref_name }}
-          files: |
+          name: installers-${{ matrix.os }}
+          if-no-files-found: error
+          path: |
             apps/desktop/release/*.dmg
             apps/desktop/release/*.zip
             apps/desktop/release/*.exe
+
+  release:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: ${{ needs.prepare.outputs.tag }}
+          draft: ${{ env.PUBLISH != 'true' }}
+          generate_release_notes: true
+          files: dist/*
